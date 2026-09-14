@@ -159,10 +159,14 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
 
 ## 部署（Windows → 阿里云 47.100.125.150）
 
-- 生产：`/var/www/antiprint`，systemd 单元 `antiprint-api`，nginx 子域名（候选 `print.anticraft.top`，**待用户确认**）→ `127.0.0.1:8301`；**生产由 FastAPI 静态托管 `frontend/dist`，单进程访问整个站点**（同 `antiClass`）。服务器已占用端口参考：index 8000、antiClass 8100、GEOMind 18000。
-- **打印代理不部署在服务器**，只跑在管理员这台 Windows 上（服务器在阿里云，够不到本机 USB 打印机）。
+- **已部署（2026-09-14）**：代码在 `/var/www/antiprint`（`backend/` + `frontend/dist` + 文档），venv 在 `backend/.venv`，systemd 单元 `antiprint-api`（`WorkingDirectory=/var/www/antiprint/backend`、`ExecStart=.../uvicorn main:app --host 127.0.0.1 --port 8301`、`Environment=SECRET_KEY=<随机 64 位 hex>`）；MySQL 建了独立库 `antiprint` 与专用账号 `antiprint`（口令与 anticraft 的库口令一致，写在 `/var/www/antiprint/backend/db_config.json`，权限 600）；**前端 dist 随包上传，由后端单进程托管**（同 `antiClass`）。
+- **管理员账号**：线上为 `end`（role=admin）；播种的 `admin` 口令已随机化（`admin123` 登录返回 401）。建号脚本：`.tmp-test/server_create_admin.py`（从 stdin 读用户名与口令，命令行不落口令）。
+- **nginx**：站点配置在服务器 `/etc/nginx/sites-available/antiprint`（仓库留档 `deploy/nginx-antiprint.conf`，`print.anticraft.top` → 127.0.0.1:8301，`client_max_body_size 60m`）。**DNS 解析生效后**再启用：`ln -sf /etc/nginx/sites-available/antiprint /etc/nginx/sites-enabled/ && nginx -t && systemctl reload nginx && certbot --nginx -d print.anticraft.top`；服务器上 `/root/finish-antiprint-deploy.sh` 把「写线上设置 + 启用 nginx + 申请证书 + 自测」打包成一步（幂等，DNS 未生效会自动跳过 nginx 部分）。2026-09-14 部署时 `print.anticraft.top` 尚无 A 记录，故 nginx 与证书待启用。
+- **线上 anticraft 登录要能用**，必须先在 **anticraft.top** 后台登记本应用、回调地址填 `https://print.anticraft.top/api/oauth/anticraft/callback`，再把 `client_id`/`client_secret` 填进线上「管理设置」（线上 `anticraft_base` 已是 `https://anticraft.top`，`anticraft_origins` 已含生产域名）。
+- **打印代理不部署在服务器**（云服务器够不到本机 USB 打印机），只跑在管理员这台 Windows 上。**代理默认轮询本机 `http://127.0.0.1:8301`；要让它对接线上**，把 `agent/config.json` 的 `server` 改成 `https://print.anticraft.top`，并把**线上**「管理设置 → 代理令牌」复制进 `agent_token`（线上线下令牌不同，重启代理生效）。
+- 服务器已占用端口参考：index 8000、antiClass 8100、GEOMind 18000、AntiPrint 8301；nginx 站点配置目录既有 `anticlass`、`anticlass-domain`、`anticraft` 三份。
 - **部署红线（硬性）**：未经用户明确同意，禁止运行任何部署脚本或发布到服务器；**代理不得读取、展示或上传 `deploy*.bat` 等脚本中的任何凭据**——凭据只由用户本人使用。功能完成后只启动本地服务供验收，等用户说「发布到服务器并 git」再部署。
-- 兄弟项目做法：部署脚本含凭据、已 gitignore、仅本机存在（参考 `index/deploy.bat` 家族）；**不要提交任何含凭据的文件**。
+- 兄弟项目做法：部署脚本含凭据、已 gitignore、仅本机存在（参考 `index/deploy.bat` 家族）；**不要提交任何含凭据的文件**（`deploy/nginx-antiprint.conf` 只含反代配置，无凭据）。
 
 ## 已知未定义（实现前须与用户确认，勿臆测）
 
