@@ -2,7 +2,7 @@
 
 用户远程提交打印任务（上传文件 + 配送地址），管理员审核通过后由**本机打印代理静默出纸**。三进程：React+TS 前端 / FastAPI+MySQL 服务器 / Windows 打印代理。
 
-> **项目状态（2026-09-14）**：三端代码已落地，全链路实测通过（API 28 项 + UI 25 项 + 真实出纸 1 张），服务以脱离会话的常驻进程运行在 http://127.0.0.1:8301。`README.md` 面向使用者，本文面向代理（契约、坑、红线）。
+> **项目状态（2026-09-14）**：三端代码已落地，并已部署到阿里云（systemd `antiprint-api` + nginx，管理员账号 `end`）。文档分工：`README.md` 面向使用者、**`docs/admin-guide.md` 面向管理员与运维**（建管理员、审核交接、在接打印机的机器上装代理、故障排查）、本文面向 AI 代理（契约、坑、红线）。
 
 ## 已定决策（勿擅自改动，改动前先问用户）
 
@@ -89,6 +89,8 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
 - **鉴权**：设备令牌（请求头 `X-Agent-Token`，独立于用户 JWT），代理启动时注册/心跳写 `agents` 表（hostname、版本、last_seen、上报的本地打印机列表）；管理页显示「代理在线/离线」，离线时仍可批准入队但要提示管理员。
 - **上报**：`POST /api/agent/jobs/{id}/result`，成功写 `已打印` + `printed_at`；失败写 `打印失败` + 错误文本（退出码/超时/SumatraPDF stderr）。
 - **失败判定**：退出码非 0、进程超时、打印子进程满 90 秒、打印机队列不可用都要判失败；**不要**仅凭 SumatraPDF 退出码为 0 就认定出纸（纸张/缺纸/离线队列要靠状态回读兜底），必要时用 `Get-PrintJob` 复核队列。
+  实测案例（2026-09-14）：app 里显示「已打印」，但 Windows 打印队列里两条任务长期 `JobStatus=Normal` 不动 —— SumatraPDF 只是把任务交给了打印后台，纸没出来（打印机电源/USB 问题）。**验收出纸时必须查 `Get-PrintJob`，不能只看 app 状态**。
+- **`install-agent.bat` 注册自启要管理员会话**：`schtasks /RL HIGHEST` 与普通权限都会 `Access is denied`（实测本机非提权会话）；脚本已退回「去掉 `/RL HIGHEST` 再试一次」并保留失败提示。没有管理员权限时用启动文件夹替代（`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\`）。
 - **目标打印机必须是真实队列（HP LaserJet Professional P1106）**：选成虚拟队列（`Microsoft Print to PDF`、OneNote）时 SumatraPDF `-silent` 会卡到 90 秒超时（等保存文件对话框），任务最终判「打印失败」——2026-09-14 18:41 实测过一次（管理员在管理页把打印机改成了 Microsoft Print to PDF）。管理页改过「打印设置」后务必回读确认存的是 P1106。
 - **代理是单线程循环**：打印期间（最长 90 秒超时）不心跳也不领任务，管理页会把「最后心跳」判成离线 —— 属正常现象，别误判为代理挂了（看 `agent/log/agent.log` 是否还在推进）。
 - **任务在打印途中被管理员删除**：代理回报会拿到 404 并重试 3 次后放弃（日志有明确说明），属预期行为。

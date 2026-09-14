@@ -36,3 +36,6 @@ desktop.ini
 
 # 线上代理配置（含线上令牌，禁止提交）
 agent/config.prod.json
+
+# 本机/线上两套代理配置的备份（含令牌，禁止提交）
+agent/config.local.json

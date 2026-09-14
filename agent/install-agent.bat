@@ -36,6 +36,11 @@ if errorlevel 1 (
 echo [INFO] Registering logon autostart task AntiPrintAgent ...
 schtasks /Create /TN AntiPrintAgent /TR "\"%VENV_PYW%\" \"%AGENT_DIR%\print_agent.py\"" /SC ONLOGON /RL HIGHEST /F
 if errorlevel 1 (
+  rem /RL HIGHEST needs Administrator; printing itself does not, so retry without it
+  echo [WARN] /RL HIGHEST failed - retrying without elevation ...
+  schtasks /Create /TN AntiPrintAgent /TR "\"%VENV_PYW%\" \"%AGENT_DIR%\print_agent.py\"" /SC ONLOGON /F
+)
+if errorlevel 1 (
   echo [ERROR] schtasks failed - run install-agent.bat as Administrator.
   exit /b 1
 )
