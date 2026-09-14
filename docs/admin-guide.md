@@ -182,7 +182,7 @@ agent\stop-agent.bat                                         :: 停止
 | 数据库 | MySQL 库 `antiprint`，专用账号 `antiprint`（凭据在 `/var/www/antiprint/backend/db_config.json`，权限 600） |
 | nginx | `/etc/nginx/sites-available/antiprint`（软链到 `sites-enabled`），反代到 `127.0.0.1:8301` |
 | 辅助脚本 | `/root/server_create_admin.py`（建管理员）、`/root/finish-antiprint-deploy.sh`（写线上设置 + 启用 nginx + 申请证书，幂等） |
-| 更新部署 | 本地 `tar czf` 打包 `backend` + `frontend/dist`，**必须排除 `.venv` / `data` / `log` / `__pycache__` / `backend/db_config.json`** → `scp` 到服务器 `/tmp` → 解包覆盖 → `systemctl restart antiprint-api`；前端改了要先 `npm.cmd run build` 再打包 |
+| 更新部署 | 在仓库根目录（Git Bash）跑 **`bash deploy/pack.sh`**：按正确排除清单打包 → 上传 → 解包 → 重启 → 自测；前端改了要先 `npm.cmd run build`。只想看包内容用 `bash deploy/pack.sh --dry-run`（脚本会拒绝包含 `db_config.json`/`data` 的包） |
 | ⚠️ 部署踩坑（实测） | 打包漏排除 `db_config.json` 会把**线上的库凭据覆盖成本机凭据**，服务立刻连不上库（健康检查变 `db:error`）。恢复：在服务器上按 §7「数据库」重写 `db_config.json`（用 anticraft 那份库口令）并 `chmod 600`，再重启服务 |
 
 ---

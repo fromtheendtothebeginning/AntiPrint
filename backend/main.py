@@ -820,8 +820,14 @@ def create_job(
             raise HTTPException(status_code=400, detail="没有有效文件可提交")
 
         job = db.create_job(user["id"], address, note, saved, mode)
+        dest_dir = config.UPLOAD_DIR / str(job["id"])
+        # 任务号来自自增主键，正常不会重名；但历史上出现过（把本机 uploads 传上服务器）
+        # 残留同名目录，导致 rename 报 Errno 39 Directory not empty。残留目录不属于任何任务，清掉再落盘。
+        if dest_dir.exists():
+            logger.warning("uploads/%s 已存在（历史残留目录），清理后重新落盘", job["id"])
+            shutil.rmtree(dest_dir, ignore_errors=True)
         try:
-            os.rename(tmp_dir, config.UPLOAD_DIR / str(job["id"]))
+            os.rename(tmp_dir, dest_dir)
         except OSError as exc:
             db.delete_job(job["id"])    # 回滚：不留没有文件的任务
             logger.error("任务 #%s 文件落盘失败：%s", job["id"], exc)

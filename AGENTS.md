@@ -174,6 +174,9 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
 - **本机 DNS 缓存**：域名解析生效后，这台 Windows 的上游解析器（路由器）可能仍缓存旧的 NXDOMAIN（`nslookup` 报 Non-existent domain），现象是浏览器打不开域名；`ipconfig /flushdns` 只清本机缓存，公共解析器（8.8.8.8/223.5.5.5/114）与服务器都正常——等路由器缓存过期/重启路由器即可（自测可用 `curl --resolve print.anticraft.top:443:47.100.125.150`）。
 - **线上 anticraft 登录要能用**，必须先在 **anticraft.top** 后台登记本应用、回调地址填 `https://print.anticraft.top/api/oauth/anticraft/callback`，再把 `client_id`/`client_secret` 填进线上「管理设置」（线上 `anticraft_base` 已是 `https://anticraft.top`，`anticraft_origins` 已含生产域名）。
 - **打印代理不部署在服务器**（云服务器够不到本机 USB 打印机），只跑在管理员这台 Windows 上。**当前 `agent/config.json` 已指向线上 `http://47.100.125.150` + 线上令牌**；等本机能解析域名后可换成 `https://print.anticraft.top`（`agent/config.prod.json` 已备好，含线上令牌、gitignore），本机开发用的那份在 `agent/config.local.json`。
+- **更新部署一律用 `bash deploy/pack.sh`**（在本仓库根目录的 Git Bash 里跑）：它按正确的排除清单打包（`.venv` / `backend/data` / `backend/log` / `backend/db_config.json` / `node_modules` / `__pycache__`）→ `scp` 上传 → 解包覆盖 `/var/www/antiprint`（不动线上 db_config.json 与 data）→ 重启 `antiprint-api` → 自测健康与首页。`--dry-run` 只打包并列出包内文件。前端改过要先 `npm.cmd run build`。
+- **打包排除清单是血泪教训（2026-09-14 两次事故）**：① 漏排除 `db_config.json` → 线上库凭据被本机凭据覆盖，服务立刻 `db:error`；② 漏排除 `backend/data` → 本机 `uploads/` 覆盖线上，残留目录与新任务号撞名，用户提交报「文件保存失败，请重试」（`os.rename` Errno 39 Directory not empty）。`deploy/pack.sh` 已内置校验：包内一旦出现这些路径直接中止。
+- 服务已在 127.0.0.1:8301 上；**提交任务失败时先查 `uploads/` 是否有库里不存在的残留目录**（`ls uploads | sort -n` 对比 `SELECT id FROM print_jobs`），`main.py` 现在遇到同名残留会先清理再落盘并在日志里警告。
 - 服务器已占用端口参考：index 8000、antiClass 8100、GEOMind 18000、AntiPrint 8301；nginx 站点配置目录既有 `anticlass`、`anticlass-domain`、`anticraft` 三份。
 - **部署红线（硬性）**：未经用户明确同意，禁止运行任何部署脚本或发布到服务器；**代理不得读取、展示或上传 `deploy*.bat` 等脚本中的任何凭据**——凭据只由用户本人使用。功能完成后只启动本地服务供验收，等用户说「发布到服务器并 git」再部署。
 - 兄弟项目做法：部署脚本含凭据、已 gitignore、仅本机存在（参考 `index/deploy.bat` 家族）；**不要提交任何含凭据的文件**（`deploy/nginx-antiprint.conf` 只含反代配置，无凭据）。
