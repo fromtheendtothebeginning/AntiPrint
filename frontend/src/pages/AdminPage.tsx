@@ -159,10 +159,11 @@ function AdminPage() {
     const anticraftValue = anticraftBase.trim()
     const payload: SettingsPayload = {
       launcher,
-      printer_name: printerName.trim(),
       copies: copiesValue,
       dry_run: dryRun ? 'true' : 'false',
     }
+    // 打印机名称为空时不提交（避免把「跟随代理默认」写成一个空值覆盖后端配置）
+    if (printerName.trim()) payload.printer_name = printerName.trim()
     // 服务地址没改动就不提交，避免用空值覆盖后端已有配置
     if (anticraftValue !== (settings?.anticraft_base ?? '')) payload.anticraft_base = anticraftValue
     // 同上：只提交发生变化的字段
@@ -379,6 +380,13 @@ function AdminPage() {
               </div>
             )}
             <p className={HINT}>下拉选项来自代理上报的本机打印队列；名称需与 Windows 中的队列名完全一致</p>
+            {/* 虚拟队列会让 SumatraPDF 的 -silent 卡到 90 秒超时、任务判失败，这里明确警告 */}
+            {/print to pdf|onenote|xps|fax/i.test(printerName) && (
+              <p className="mt-2 flex items-start gap-2 rounded-xl bg-clay/10 px-3 py-2 text-xs text-clay">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                这是虚拟打印机队列，静默打印会卡满 90 秒后判失败；请选择真实打印机（如 HP LaserJet Professional P1106）。
+              </p>
+            )}
           </div>
 
           <div className="md:col-span-2">
