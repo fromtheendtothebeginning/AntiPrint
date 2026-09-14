@@ -1,6 +1,6 @@
 // 后端接口类型定义（与 backend 的 schema 手工同步，改一端必须同步另一端）
 
-export type Role = 'user' | 'admin'
+export type Role = 'user' | 'admin' | 'root'
 
 export interface User {
   id: number
@@ -87,10 +87,23 @@ export interface Settings {
   anticraft_client_secret: string
   /** 允许发起授权的来源白名单（逗号分隔，如 http://127.0.0.1:8301,http://localhost:3010） */
   anticraft_origins: string
+  /** anticraft 管理员用户名（逗号分隔）：这些账号用 anticraft 登录/绑定时本地给 admin */
+  anticraft_admin_users: string
 }
 
 /** anticraft 授权码登录的配置状态：enabled 为 false 时登录页禁用跳转按钮 */
 export interface AnticraftOauthStatus {
   enabled: boolean
   base: string
+}
+
+/** 用户管理页的行（root/管理员可见） */
+export interface AdminUserRow {
+  id: number
+  username: string
+  role: Role
+  source: string
+  anticraft_id: number | null
+  created_at: string
+  job_count: number
 }

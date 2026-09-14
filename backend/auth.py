@@ -76,7 +76,14 @@ def get_current_user(authorization: str = Header(default="")) -> dict:
 
 
 def require_admin(user: dict = Depends(get_current_user)) -> dict:
-    """管理员依赖：非 admin 返回 403"""
-    if user.get("role") != "admin":
+    """管理员依赖：admin 或 root 均可（root 是超集）"""
+    if user.get("role") not in ("admin", "root"):
         raise HTTPException(status_code=403, detail="需要管理员权限")
+    return user
+
+
+def require_root(user: dict = Depends(get_current_user)) -> dict:
+    """超级管理员依赖：只有 role=root 能过（用户管理、角色变更等敏感操作）"""
+    if user.get("role") != "root":
+        raise HTTPException(status_code=403, detail="需要超级管理员权限")
     return user

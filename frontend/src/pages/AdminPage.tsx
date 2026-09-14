@@ -76,6 +76,7 @@ function AdminPage() {
   const [anticraftClientId, setAnticraftClientId] = useState('')
   const [anticraftClientSecret, setAnticraftClientSecret] = useState('')
   const [anticraftOrigins, setAnticraftOrigins] = useState('')
+  const [anticraftAdminUsers, setAnticraftAdminUsers] = useState('')
   const [saving, setSaving] = useState(false)
   const [copied, setCopied] = useState(false)
   const [rotateOpen, setRotateOpen] = useState(false)
@@ -106,6 +107,7 @@ function AdminPage() {
       setCopies(saved.copies || '1')
       setDryRun(isEnabled(saved.dry_run))
       setAnticraftBase(saved.anticraft_base ?? '')
+      setAnticraftAdminUsers(saved.anticraft_admin_users ?? '')
       setAnticraftClientId(saved.anticraft_client_id ?? '')
       // 后端只回掩码，未配置时是空串；直接把返回值作为输入框初始内容
       setAnticraftClientSecret(saved.anticraft_client_secret ?? '')
@@ -174,6 +176,8 @@ function AdminPage() {
     if (secretValue && secretValue !== MASKED_SECRET) payload.anticraft_client_secret = secretValue
     const originsValue = anticraftOrigins.trim()
     if (originsValue !== (settings?.anticraft_origins ?? '')) payload.anticraft_origins = originsValue
+    const adminUsersValue = anticraftAdminUsers.trim()
+    if (adminUsersValue !== (settings?.anticraft_admin_users ?? '')) payload.anticraft_admin_users = adminUsersValue
 
     setSaving(true)
     setSettingsError('')
@@ -448,6 +452,23 @@ function AdminPage() {
             />
             <p className={HINT}>
               逗号分隔，需与 anticraft 登记的「回调地址」前缀一致，如 http://127.0.0.1:8301,http://localhost:3010
+            </p>
+          </div>
+
+          <div className="md:col-span-2">
+            <label className={LABEL} htmlFor="setting-anticraft-admin-users">
+              anticraft 管理员名单
+            </label>
+            <input
+              id="setting-anticraft-admin-users"
+              className={INPUT}
+              value={anticraftAdminUsers}
+              placeholder="例如：end（多个用逗号分隔）"
+              onChange={(event) => setAnticraftAdminUsers(event.target.value)}
+            />
+            <p className={HINT}>
+              逗号分隔的 anticraft 用户名。这些账号用 anticraft 登录或绑定时，在 AntiPrint 里直接获得管理员权限
+              （anticraft 开放接口不返回角色，因此用这份名单；密码登录方式会优先采用 anticraft 返回的角色）
             </p>
           </div>
         </div>

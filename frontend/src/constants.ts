@@ -53,3 +53,10 @@ export function formatTime(value: string | null): string {
     second: '2-digit',
   })
 }
+
+/** 角色文案（与后端 auth.require_admin / require_root 对应） */
+export const ROLE_LABEL: Record<string, string> = {
+  user: '普通用户',
+  admin: '管理员',
+  root: '超级管理员',
+}

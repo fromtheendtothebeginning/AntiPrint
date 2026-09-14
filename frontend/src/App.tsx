@@ -11,7 +11,7 @@ import {
   useLocation,
   useNavigate,
 } from 'react-router-dom'
-import { FileText, ListChecks, LogOut, PanelLeft, Printer, Settings, Upload, User, UserCog } from 'lucide-react'
+import { FileText, ListChecks, LogOut, PanelLeft, Printer, Settings, ShieldCheck, Upload, User, UserCog } from 'lucide-react'
 import { api, clearToken, getToken, getUser, setOnAuthExpired, setUser as persistUser } from './api'
 import ThemeToggle from './components/ThemeToggle'
 import LoginPage from './pages/LoginPage'
@@ -21,6 +21,8 @@ import MyJobsPage from './pages/MyJobsPage'
 import ProfilePage from './pages/ProfilePage'
 import QueuePage from './pages/QueuePage'
 import AdminPage from './pages/AdminPage'
+import UsersPage from './pages/UsersPage'
+import { ROLE_LABEL } from './constants'
 import type { User as UserType } from './types/api'
 
 /** 顶栏标题：与参考实现的 pageMeta 同款映射 */
@@ -30,19 +32,23 @@ const PAGE_META: Record<string, { title: string; subtitle: string }> = {
   '/profile': { title: '我的配置', subtitle: '默认配送地址与配送方式，以及 anticraft 账号绑定' },
   '/queue': { title: '任务队列', subtitle: '审核打印任务，并在出纸后勾选待配送 / 待取件与完成' },
   '/admin': { title: '管理设置', subtitle: '打印代理状态、打印参数、anticraft 绑定应用与代理令牌' },
+  '/users': { title: '用户管理', subtitle: '查看账号，并把普通用户提拔为管理员（仅超级管理员）' },
 }
 
 interface RequireAuthProps {
   user: UserType | null
-  /** 仅管理员可访问 */
+  /** 仅管理员（admin 或 root）可访问 */
   admin?: boolean
+  /** 仅超级管理员（root）可访问 */
+  root?: boolean
   children: ReactNode
 }
 
 /** 简单的路由守卫：未登录跳登录页，权限不足回提交页 */
-function RequireAuth({ user, admin = false, children }: RequireAuthProps) {
+function RequireAuth({ user, admin = false, root = false, children }: RequireAuthProps) {
   if (!user) return <Navigate to="/login" replace />
-  if (admin && user.role !== 'admin') return <Navigate to="/submit" replace />
+  if (admin && user.role !== 'admin' && user.role !== 'root') return <Navigate to="/submit" replace />
+  if (root && user.role !== 'root') return <Navigate to="/submit" replace />
   return <>{children}</>
 }
 
@@ -106,7 +112,7 @@ function App() {
         path="/login"
         element={
           user ? (
-            <Navigate to={user.role === 'admin' ? '/admin' : '/submit'} replace />
+            <Navigate to={user.role === 'root' || user.role === 'admin' ? '/queue' : '/submit'} replace />
           ) : (
             <LoginPage onLogin={handleLogin} />
           )
@@ -157,6 +163,14 @@ function App() {
           </RequireAuth>
         }
       />
+      <Route
+        path="/users"
+        element={
+          <RequireAuth user={user} root>
+            <UsersPage />
+          </RequireAuth>
+        }
+      />
       <Route path="/" element={<Navigate to="/submit" replace />} />
       <Route path="*" element={<Navigate to="/submit" replace />} />
     </Routes>
@@ -202,7 +216,12 @@ function App() {
     { to: '/profile', label: '我的配置', Icon: UserCog, admin: false },
     { to: '/queue', label: '任务队列', Icon: ListChecks, admin: true },
     { to: '/admin', label: '管理设置', Icon: Settings, admin: true },
-  ].filter((item) => !item.admin || user.role === 'admin')
+    { to: '/users', label: '用户管理', Icon: ShieldCheck, root: true },
+  ].filter((item) => {
+    if ('root' in item && item.root) return user.role === 'root'
+    if (item.admin) return user.role === 'admin' || user.role === 'root'
+    return true
+  })
 
   return (
     <div className="min-h-screen">
@@ -251,7 +270,7 @@ function App() {
                   {user.username}
                 </div>
                 <div className="truncate text-xs text-gray-400">
-                  {user.role === 'admin' ? '管理员' : '普通用户'}
+                  {ROLE_LABEL[user.role] ?? '普通用户'}
                 </div>
               </div>
             </div>

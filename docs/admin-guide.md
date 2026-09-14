@@ -28,7 +28,19 @@
 | 管理员 | `end`（口令由部署者设定） |
 | 默认账号 | 播种的 `admin` 口令已随机化，`admin123` 登录返回 401（不可用） |
 
-### 1.2 新建 / 重置管理员（需要服务器 SSH 权限）
+### 1.2 角色层级与「用户管理」页
+
+| 角色 | 能做什么 |
+|---|---|
+| `user` 普通用户 | 提交打印、看自己的任务、改自己的默认配置/绑定 anticraft |
+| `admin` 管理员 | 上面全部 + 任务队列（审核/驳回/交接勾选）、预览文件、管理设置（打印机/启动器/令牌/anticraft 配置）、用户列表（只读） |
+| `root` 超级管理员 | 上面全部 + **用户管理**：把普通用户提拔为管理员 / 收回管理员 |
+
+- 线上 `end` 是 **root**；`end` 那个账号同时也是 anticraft 绑定账号（`source=anticraft`）。
+- 提拔操作：登录 root → 侧栏「**用户管理**」→ 目标用户行点「**设为管理员**」（收回同理）。护栏：不能改自己的角色、不能改 root 的角色、接口只能设 `user`/`admin`（**不能通过网页造出新的 root**，root 只能在服务器上设置）。
+- 只有 root 能看到「用户管理」入口，其他角色看不到、直接访问也会被重定向。
+
+### 1.3 新建 / 重置管理员（需要服务器 SSH 权限）
 
 服务器上有一个辅助脚本，用户名与口令从**标准输入**读入，不出现在命令行历史里：
 
@@ -38,9 +50,9 @@ printf 'someone\n<你的口令>\n' | /var/www/antiprint/backend/.venv/bin/python
 
 它做的事：账号不存在就创建为管理员；已存在就**重设口令并把角色改为 admin**；顺带检查默认 `admin` 是否仍是 `admin123`，是就改成随机值。脚本文件在仓库里也有备份：`.tmp-test/server_create_admin.py`。
 
-> **目前没有「用户管理」网页界面**，建管理员只能走上面的脚本（或用 `db.create_user` 自行调用）。这是已知待补功能。
+> 有了 root 之后，日常提拔管理员用「用户管理」页即可；这个脚本主要用于**第一个**管理员/root、或重置口令（服务器上没有界面能改口令）。
 
-### 1.3 管理员登录后能做什么
+### 1.4 管理员登录后能做什么
 
 - **任务队列**：审核（同意 / 驳回，驳回必填理由）、预览上传的文件、打印完成后勾选交接状态。
 - **管理设置**：启动器（SumatraPDF / 系统默认程序）、目标打印机、份数、演练模式、anticraft 绑定应用（client_id / client_secret / 允许来源）、代理令牌、重置令牌。
@@ -170,7 +182,8 @@ agent\stop-agent.bat                                         :: 停止
 | 数据库 | MySQL 库 `antiprint`，专用账号 `antiprint`（凭据在 `/var/www/antiprint/backend/db_config.json`，权限 600） |
 | nginx | `/etc/nginx/sites-available/antiprint`（软链到 `sites-enabled`），反代到 `127.0.0.1:8301` |
 | 辅助脚本 | `/root/server_create_admin.py`（建管理员）、`/root/finish-antiprint-deploy.sh`（写线上设置 + 启用 nginx + 申请证书，幂等） |
-| 更新部署 | 本地 `tar czf` 打包 `backend` + `frontend/dist`（排除 `.venv/data/log/db_config.json`）→ `scp` 到服务器 `/tmp` → 解包覆盖 → `systemctl restart antiprint-api`；前端改了要先 `npm.cmd run build` 再打包 |
+| 更新部署 | 本地 `tar czf` 打包 `backend` + `frontend/dist`，**必须排除 `.venv` / `data` / `log` / `__pycache__` / `backend/db_config.json`** → `scp` 到服务器 `/tmp` → 解包覆盖 → `systemctl restart antiprint-api`；前端改了要先 `npm.cmd run build` 再打包 |
+| ⚠️ 部署踩坑（实测） | 打包漏排除 `db_config.json` 会把**线上的库凭据覆盖成本机凭据**，服务立刻连不上库（健康检查变 `db:error`）。恢复：在服务器上按 §7「数据库」重写 `db_config.json`（用 anticraft 那份库口令）并 `chmod 600`，再重启服务 |
 
 ---
 

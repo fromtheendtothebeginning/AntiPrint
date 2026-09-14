@@ -1,5 +1,15 @@
 // 全站唯一请求出口：统一携带 Bearer 令牌、统一拦截 401 过期、统一转换为中文错误
-import type { Agent, AnticraftOauthStatus, DeliveryMode, Job, JobStatus, Profile, Settings, User } from './types/api'
+import type {
+  AdminUserRow,
+  Agent,
+  AnticraftOauthStatus,
+  DeliveryMode,
+  Job,
+  JobStatus,
+  Profile,
+  Settings,
+  User,
+} from './types/api'
 
 const TOKEN_KEY = 'token'
 const USER_KEY = 'user'
@@ -99,6 +109,7 @@ export interface SettingsPayload {
   anticraft_client_id?: string
   anticraft_client_secret?: string
   anticraft_origins?: string
+  anticraft_admin_users?: string
 }
 
 /** 用户配置的请求体（默认地址 / 默认配送方式） */
@@ -296,6 +307,17 @@ export const api = {
   /** 管理员删除任务 */
   async deleteJob(id: number): Promise<void> {
     await request<{ ok: boolean }>(`/api/jobs/${id}`, { method: 'DELETE' })
+  },
+
+  /** 用户列表（管理员可看；改角色需要 root） */
+  async listUsers(): Promise<AdminUserRow[]> {
+    const data = await request<{ users: AdminUserRow[] }>('/api/users')
+    return data.users
+  },
+
+  /** root 把用户设为普通用户 / 管理员 */
+  async setUserRole(userId: number, role: 'user' | 'admin'): Promise<void> {
+    await request<{ ok: boolean }>(`/api/users/${userId}/role`, { method: 'POST', body: { role } })
   },
 
   /** 管理端读取系统设置与代理信息 */

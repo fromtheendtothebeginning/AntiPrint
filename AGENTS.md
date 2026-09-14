@@ -127,7 +127,11 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
 
 - 复用 `D:\anticraft\index` 的模式：**SHA-256 预哈希 → bcrypt**（绕过 72 字节限制，直接 `import bcrypt`，不用 passlib）、**pyjwt HS256 24h**（不用 python-jose，避免 C 扩展编译）。
 - 前端 token 存 `localStorage.token`、用户信息 `localStorage.user`，请求头 `Authorization: Bearer <token>`；**所有带 token 的请求必须走 `api.ts` 的 `request()`**（统一 401 拦截 → 清 localStorage → 弹「登录已过期」，绕开就丢这套行为）。
-- 权限：`users.role` 为 `user`/`admin`，后端 `require_admin` 依赖拦截 403。默认管理员播种（`ADMIN_PASSWORD` 环境变量可覆盖），登录限速（5 次/分钟/IP）。
+- **角色三档**：`user`（普通用户）< `admin`（管理员）< `root`（超级管理员）。后端 `auth.require_admin` 放行 admin 与 root，`auth.require_root` 只放行 root；**文件访问判断也要用 `user["role"] not in ("admin", "root")`**（曾只判 `!= "admin"`，root 会被挡在自己的接口外）。
+  - 用户管理接口（2026-09-14 新增）：`GET /api/users`（admin/root 可看：角色/来源/anticraft 绑定/任务数/注册时间）、`POST /api/users/{id}/role`（**仅 root**，body `{role: 'user'|'admin'}`）。护栏：不能改自己的角色、不能改 root 的角色、**不允许通过接口把谁设成 root**（role 只能 user/admin）。
+  - 线上 `end` = root（本机同样）；`end` 是经 anticraft 授权登录自动建号的账号（`source=anticraft`）。前端 `/users` 页（侧栏「用户管理」）只对 root 显示，root 在那里把普通用户提拔为管理员 / 收回管理员。
+  - anticraft 管理员映射：`_promote_if_anticraft_admin()` 只把 **user** 提升为 admin（不动 admin/root，不降级）；密码登录路径优先用 anticraft 返回的 `role`，OAuth 路径因其开放接口不返回角色，走设置项 `anticraft_admin_users`（逗号分隔用户名）。
+- 默认管理员播种（`ADMIN_PASSWORD` 环境变量可覆盖），登录限速（5 次/分钟/IP）。
 - **文件下载/预览必须鉴权**：仅任务提交人本人或管理员可取，带 `Content-Disposition` + `X-Content-Type-Options: nosniff`；`agents` 令牌只能领取/回报任务，**不得读他人文件**。
 
 ## 上传与安全

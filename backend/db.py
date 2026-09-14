@@ -100,6 +100,9 @@ SETTINGS_DEFAULTS = {
     "anticraft_base": "https://anticraft.top",
     "anticraft_client_id": "",
     "anticraft_client_secret": "",
+    # anticraft 管理员用户名（逗号分隔）：这些账号用 anticraft 登录/绑定时本地直接给 admin
+    # （anticraft 开放接口目前不返回角色，只能用名单；接口将来若回 role/is_admin 会优先采用）
+    "anticraft_admin_users": "",
     # 允许发起授权的来源（Origin 白名单，逗号分隔），必须与 anticraft 后台登记的回调地址前缀一致
     "anticraft_origins": "http://127.0.0.1:8301,http://localhost:8301,http://localhost:3010,http://127.0.0.1:3010",
 }
@@ -238,6 +241,23 @@ def set_user_password(user_id, password_hash):
     """更新密码哈希（anticraft 密码登录时同步为 anticraft 侧的密码，保证两者一致）。"""
     with tx() as cur:
         cur.execute("UPDATE users SET password_hash=%s WHERE id=%s", (password_hash, user_id))
+
+
+def set_user_role(user_id, role):
+    """设置用户角色（用于 root 提拔/降级，以及 anticraft 管理员自动提权）。"""
+    with tx() as cur:
+        cur.execute("UPDATE users SET role=%s WHERE id=%s", (role, user_id))
+
+
+def list_users():
+    """用户列表（按注册顺序），带各自任务数，供用户管理页使用。"""
+    with tx() as cur:
+        cur.execute(
+            "SELECT u.id, u.username, u.role, u.source, u.anticraft_id, u.created_at, "
+            "  (SELECT COUNT(*) FROM print_jobs j WHERE j.user_id = u.id) AS job_count "
+            "FROM users u ORDER BY u.id"
+        )
+        return [_plain(row) for row in cur.fetchall()]
 
 
 def set_user_profile(user_id, default_address, default_delivery):

@@ -160,7 +160,7 @@ def _load_job_for(job_id: int, user: dict) -> dict:
     job = db.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="任务不存在")
-    if user["role"] != "admin" and job["user_id"] != user["id"]:
+    if user["role"] not in ("admin", "root") and job["user_id"] != user["id"]:
         raise HTTPException(status_code=403, detail="无权访问该任务")
     return job
 
@@ -250,6 +250,7 @@ class SettingsBody(BaseModel):
     anticraft_client_id: str | None = None
     anticraft_client_secret: str | None = None
     anticraft_origins: str | None = None
+    anticraft_admin_users: str | None = None
 
 
 class TicketBody(BaseModel):
@@ -391,6 +392,51 @@ def anticraft_unbind(body: UnbindBody, user: dict = Depends(auth.get_current_use
     return {"profile": _profile_payload(user)}
 
 
+# ── 用户管理（root：超级管理员）──
+# 角色层级：user < admin < root。admin 能看用户列表，只有 root 能改角色；
+# root 只能把人设为 user / admin（不能通过接口再造 root，避免权限外扩）。
+
+class RoleBody(BaseModel):
+    role: str = ""
+
+
+@app.get("/api/users")
+def list_users(user: dict = Depends(auth.require_admin)):
+    """用户列表（管理员可看，含角色/来源/anticraft 绑定/任务数）"""
+    return {
+        "users": [
+            {
+                "id": row["id"],
+                "username": row["username"],
+                "role": row["role"],
+                "source": row.get("source") or "local",
+                "anticraft_id": row.get("anticraft_id"),
+                "created_at": row.get("created_at"),
+                "job_count": row.get("job_count") or 0,
+            }
+            for row in db.list_users()
+        ]
+    }
+
+
+@app.post("/api/users/{user_id}/role")
+def set_user_role(user_id: int, body: RoleBody, user: dict = Depends(auth.require_root)):
+    """root 把某个用户设为「普通用户」或「管理员」"""
+    target_role = (body.role or "").strip()
+    if target_role not in ("user", "admin"):
+        raise HTTPException(status_code=400, detail="角色只能是 user（普通用户）或 admin（管理员）")
+    target = db.get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if target["id"] == user["id"]:
+        raise HTTPException(status_code=400, detail="不能修改自己的角色")
+    if target["role"] == "root":
+        raise HTTPException(status_code=400, detail="不能修改超级管理员（root）的角色")
+    db.set_user_role(target["id"], target_role)
+    logger.info("root %s 把用户 %s 设为 %s", user["username"], target["username"], target_role)
+    return {"ok": True, "user": {"id": target["id"], "username": target["username"], "role": target_role}}
+
+
 @app.post("/api/login/anticraft")
 def login_anticraft(body: LoginBody, request: Request):
     """用 anticraft 账号登录。
@@ -447,6 +493,8 @@ def login_anticraft(body: LoginBody, request: Request):
 
     if not user:
         raise HTTPException(status_code=500, detail="账号创建失败，请重试")
+    # anticraft 站内登录响应里带 role，管理员直接给本地 admin（只提升不降级）
+    user = _promote_if_anticraft_admin(user, data.get("user") or {})
     return {"token": auth.create_token(user), "user": _public_user(user), "auto_registered": auto_registered}
 
 
@@ -491,6 +539,43 @@ def _anticraft_config() -> tuple:
 def _anticraft_origins() -> list:
     raw = db.get_settings().get("anticraft_origins") or ""
     return [part.strip().rstrip("/") for part in raw.split(",") if part.strip()]
+
+
+def _anticraft_grants_admin(user_info: dict, username: str) -> bool:
+    """判断这个 anticraft 账号是不是管理员。
+
+    - 密码登录走的是 anticraft 站内 `/api/login`，响应里带 `role`，直接用；
+    - OAuth 绑定的开放接口目前只回 id/username/nickname/avatar_url/created_at（**没有角色**），
+      所以退回到可配置名单 `settings.anticraft_admin_users`（逗号分隔用户名）；
+    - 将来开放接口若补上 role / is_admin / is_staff，会优先采用接口值。
+    """
+    for key in ("role", "is_admin", "is_staff"):
+        if key in (user_info or {}):
+            raw = user_info[key]
+            if raw is True:
+                return True
+            text = str(raw).strip().lower()
+            if text in ("admin", "true", "1", "yes"):
+                return True
+            if text in ("user", "false", "0", "no"):
+                return False
+    names = [
+        name.strip().lower()
+        for name in (db.get_settings().get("anticraft_admin_users") or "").split(",")
+        if name.strip()
+    ]
+    return bool(username) and username.strip().lower() in names
+
+
+def _promote_if_anticraft_admin(user: dict, user_info: dict) -> dict:
+    """anticraft 管理员 → 本地 admin。**只提升不降级**：本地已有的管理员不会因为 anticraft 侧不是管理员被撤权。"""
+    if not user:
+        return user
+    if user.get("role") == "user" and _anticraft_grants_admin(user_info, user.get("username", "")):
+        db.set_user_role(user["id"], "admin")
+        logger.info("anticraft 侧为管理员，本地账号已提升为 admin：%s", user["username"])
+        return db.get_user_by_id(user["id"]) or user
+    return user
 
 
 def _oauth_fail(origin, message: str):
@@ -624,6 +709,7 @@ def anticraft_oauth_callback(code: str = "", state: str = "", error: str = ""):
         logger.info("anticraft 用户名已变更：本地 %s ↔ anticraft %s（按 anticraft_id 识别）", user["username"], username)
 
     ticket = secrets.token_urlsafe(24)
+    user = _promote_if_anticraft_admin(user, info)      # anticraft 管理员 → 本地 admin
     with _OAUTH_LOCK:
         _OAUTH_TICKETS[ticket] = {
             "user_id": user["id"], "auto_registered": auto_registered,
@@ -932,6 +1018,9 @@ def update_settings(body: SettingsBody, user: dict = Depends(auth.require_admin)
     if body.anticraft_origins is not None:
         origins = ",".join(part.strip().rstrip("/") for part in str(body.anticraft_origins).split(",") if part.strip())
         updates["anticraft_origins"] = origins[:512]
+    if body.anticraft_admin_users is not None:
+        names = ",".join(part.strip() for part in str(body.anticraft_admin_users).split(",") if part.strip())
+        updates["anticraft_admin_users"] = names[:512]
     if updates:
         db.set_settings(updates)
     logger.info("管理员 %s 更新设置：%s", user["username"], "、".join(sorted(updates)) or "无变更")
