@@ -1,0 +1,201 @@
+# AGENTS.md — AntiPrint · 远程打印服务
+
+用户远程提交打印任务（上传文件 + 配送地址），管理员审核通过后由**本机打印代理静默出纸**。三进程：React+TS 前端 / FastAPI+MySQL 服务器 / Windows 打印代理。
+
+> **项目状态（2026-09-14）**：三端代码已落地，全链路实测通过（API 28 项 + UI 25 项 + 真实出纸 1 张），服务以脱离会话的常驻进程运行在 http://127.0.0.1:8301。`README.md` 面向使用者，本文面向代理（契约、坑、红线）。
+
+## 已定决策（勿擅自改动，改动前先问用户）
+
+| 决策点 | 结论 |
+|---|---|
+| 前端 | React 18 + Vite + **TypeScript（strict）**，`@/*` 路径别名；**Tailwind CSS v4 + lucide-react**（2026-09-14 全站换肤为暖色仪表盘风格，token 见「前端约定」；不再用页面私有 CSS / 内联 SVG 图标库） |
+| 后端 | Python 3.14 + FastAPI + PyMySQL + **MySQL 8**（与 `D:\anticraft\index`、`antiClass` 一致） |
+| 静默打印 | **本机常驻打印代理**领取任务后静默打印（不用 `window.print()`，浏览器无法程序化选打印机/份数） |
+| 打印内容 | **仅文件上传**（PDF / 图片为可静默打印格式；Office 转换见「已知未定义」） |
+| 本地端口 | 后端 **8301**、Vite **3010**（3000/8000 被 `index`、**8300 被 natpierce 内网穿透工具占用**，2026-09-14 实测；3306 有 MySQL 在跑） |
+| 目标打印机 | `HP LaserJet Professional P1106`（USB001，本机唯一真实打印机，**主机型/GDI**）。**注意**：管理页「保存设置」会把下拉当前值一起写库，2026-09-14 18:25 被改成过 `Microsoft Print to PDF`（虚拟队列，静默打印会弹保存对话框）——改打印机后务必确认存的是 P1106。 |
+| 账号体系 | **anticraft 账号绑定登录**（协议：`D:\anticraft\index\docs\account-binding-api.md`）。① 主用：OAuth 授权码模式——前端跳 `GET /api/oauth/anticraft/start`（302 到 anticraft `/bind`）→ 用户确认 → 回跳 `GET /api/oauth/anticraft/callback`（服务端用 client_secret 换 token）→ 按 **anticraft 用户 ID** 绑定/创建本地账号（`users.source='anticraft'`、`users.anticraft_id`）→ 302 回前端落地页带一次性 ticket → `POST /api/oauth/anticraft/exchange` 换本地 JWT。密码不经过本项目。② 备用：`POST /api/login/anticraft` 用账号密码向 anticraft 校验（自动建号 + 密码同步）。③ 本地自建账号同名时**一律拒绝**（防顶号，含 admin）。**启用跳转授权必须先在 anticraft 后台「绑定应用」登记** `client_id`/`client_secret` 与**精确回调地址**，再填进「打印设置」（`anticraft_base` / `anticraft_client_id` / `anticraft_client_secret` / `anticraft_origins`） |
+
+## 核心流程（端到端时序）
+
+```
+用户浏览器 ──登录/上传文件+选配送方式+填地址──▶ 服务器(FastAPI+MySQL)：print_jobs.status = 待审核
+管理员浏览器 ──预览文件/同意──▶ status = 已通过（驳回则必填理由 → 已驳回，可改后重提）
+打印代理(常驻) ──轮询+原子领取──▶ status = 打印中 → SumatraPDF 静默打印 → 回报
+                                        ├─ 成功 → status = 已打印（记 printed_at/agent）
+                                        └─ 失败 → status = 打印失败（错误入库，可重试回「已通过」）
+管理员浏览器 ──任务队列勾选──▶ 待配送（配送单）/ 待取件（取件单）──再次勾选──▶ 已完成（记 finished_at）
+```
+
+## 验证记录（2026-09-14 实测，改动后请重跑）
+
+| 层 | 怎么测 | 结果 |
+|---|---|---|
+| 接口 | `backend\.venv\Scripts\python.exe .tmp-test\e2e.py`（**临时脚本，不算交付代码**） | 28 项全通过：注册/登录/401/403、上传（exe 拒绝）、审核、代理注册/心跳/领取/下载字节一致/回报、驳回-重提、失败-重入队、他人取文件 403 |
+| UI | `node .tmp-test\ui-test2.mjs` / `ui-test3.mjs`（复用 `D:\anticraft\index` 的 playwright-core + 本机 chromium） | 25 项全通过：登录跳转、提交任务、我的任务、同意/驳回（空理由禁用）、预览 iframe、代理在线状态、设置区；截图在 `.tmp-test\shots\` |
+| 打印 | `agent\print_agent.py --once`（真实出纸） | 18:17 调 SumatraPDF 打出 1 张测试页，任务转「已打印」，打印机状态 Normal、DetectedErrorState=0、队列清空 |
+| anticraft 登录 | `.tmp-test\anticraft_test.py` + `anticraft_test2.py`（先用 `.tmp-test\mock_anticraft.py` 起 8302 假服务，再指向真实 `anticraft.top`） | 19 项全通过：自动注册（`source=anticraft`）、二次登录不重复注册、**anticraft 改密后同步且旧密码失效**、密码错 401、空参 400、本地同名 409 且本地密码未被顶掉、不可达 502、真实服务 401（可达性+契约）。UI：`ui-test4.mjs` 8 项全通过（Tab、自动建号提示、跳转、管理页回显） |
+| anticraft 授权绑定 | `.tmp-test\oauth_test.py`（mock 扮演授权页与开放接口，按 index 的接入文档实现） | 25 项全通过：未配置 503、来源白名单 400、start→bind→callback→exchange 全链路建号、按 `anticraft_id` 绑定（改名不新建账号）、ticket/state 一次性、二次授权不重复建号、用户拒绝、同名本地账号拒绝、错误 client_secret 回报错。UI：`ui-test5.mjs` 10 项全通过（按钮可用性、真实点击跳转→授权→回跳自动登录、未配置时的登记引导）. 真实 `anticraft.top`：`/api/open/apps/{id}` 与 `/bind` 探活正常（未登记返回 404 白名单提示） |
+| 回归 | 改完 anticraft 后重跑 `e2e.py` | 27/28（唯一失败项是 `printer_name` 被人在管理页改成了 `Microsoft Print to PDF`，非代码问题） |
+| 换肤（Tailwind + lucide） | `node .tmp-test\ui-test6.mjs`（逐页截图：浅色/深色登录页、提交页与成功态、我的任务、管理后台、驳回弹窗、预览弹窗、anticraft Tab） | 16 项中 15 项通过、1 项因「假设未配置绑定应用」的过期断言失败（实际已配置，脚本已改为跟随 `/api/oauth/anticraft/status`）；页面 JS 错误 0、HTTP 4xx/5xx 0；功能回归（注册/提交/我的任务/管理员审查/驳回必填理由/预览 iframe/退出）全通过 |
+| 真实跳转授权（本机 anticraft） | `node .tmp-test\ui-test7.mjs`（不用 mock：授权页是跑在本机的 anticraft，走真实 `/bind` + `/api/open/token`） | 7 项全通过、页面 JS 错误 0：点「跳转授权」→ 本机 anticraft 授权页（显示申请方 `antiprintlocal`、当前账号、跳转地址）→ 点「同意绑定」→ 回跳本项目自动登录（`source=anticraft`、`anticraft_id=126`）；另用 `/api/bind/authorize` 逐个核对回调地址：只认 `http://127.0.0.1:8301/api/oauth/anticraft/callback`，`localhost:3010` 与 `localhost:8301` 均报「回调地址与登记值不一致」 |
+| 配送方式 + 交接流转 | `backend\.venv\Scripts\python.exe .tmp-test\e2e2.py` | 26 项全通过：默认配置读写与非法值 400、默认取件时地址可空、显式配送缺地址 400、配送/取件单各自的合法流转、跨方式流转 400、越级 400、重复标记 400、普通用户调用 403、`finished_at` 落库、绑定票据一次性、未绑定账号解绑 400 |
+| 队列/配置 UI | `node .tmp-test\ui-test8.mjs` | 14 项全通过：配置页保存默认地址与默认取件、提交页按默认值预填、队列页勾选「待配送」→「已完成」（勾选后状态与时间正确）、用户侧看到新状态；页面 JS 错误 0 |
+| 绑定/解绑 UI | `node .tmp-test\ui-test9.mjs`（真实本机 anticraft 授权，自包含可重复） | 7 项全通过：A 账号绑定成功并显示 anticraft 用户 ID → B 账号绑同一 anticraft 账号被拒（提示占用者）→ A 解绑（设置本地密码）后可用新密码登录；页面 JS 错误 0 |
+
+**测试中修掉的真 bug（勿回退）**：
+1. **代理把 `dry_run` 判断成恒真** —— 服务端下发的是字符串 `"0"`，`bool("0")` 在 Python 里是 `True`，导致代理永远只干跑却回报成功（任务被误标已打印）。已改为 `truthy()` 解析（`print_agent.py`），**任何服务端开关值都要走它**。
+2. **任务列表缺提交人** —— 管理页「提交人」列空白，`db.list_jobs/get_job` 已 JOIN `users.username`。
+3. **`/api/login/anticraft` 的 401 曾触发前端「登录已过期」拦截** —— `api.ts` 的 401 白名单只排除了 `/api/login`，已补上 `/api/login/anticraft`（现集中为 `NO_EXPIRY_PATHS`，**新增登录类接口时要同步这里**）。
+4. **`POST /api/settings` 曾回明文 client_secret**（GET 已掩码、POST 忘了）—— 已统一走 `_masked_settings()`；`update_settings` 对空串/掩码 `******` 视为「不修改」，清空要直接改库。
+5. **登录页告警被 flex 拆成三栏** —— 覆盖 `.alert` 的 display 必须写成 `.alert.xxx`（见「环境事实与坑」的 CSS 优先级一条）。
+
+## 目录规划
+
+```
+frontend/          React 18 + Vite + TS；dev 3010，/api 代理到 127.0.0.1:8301；构建产物 dist/（由后端托管）
+  src/pages/       LoginPage / SubmitPage / MyJobsPage / ProfilePage（我的配置）/ QueuePage（任务队列，管理员）/ AdminPage（管理设置）/ AnticraftCallbackPage（各带同名 .css 已删除，全部 Tailwind）
+  src/components/  Modal / DropZone / FileChips / TextField / ThemeToggle / Icons
+  src/api.ts       所有请求的唯一出口（401 统一处理）；src/types/api.ts 接口类型
+backend/           FastAPI + MySQL；main.py 入口、db.py 存储层、auth.py 认证、agent_api.py 代理接口、config.py、constants.py
+  data/uploads/<job_id>/   上传文件存储（gitignore）；log/server.log 运行日志（gitignore）
+  db_config.json / db_config.example.json   DB 凭据（前者 gitignore）
+agent/             Windows 打印代理（Python + requests，常驻）
+  print_agent.py   轮询/领取/打印/回报；config.json 本机配置（gitignore，模板 config.example.json）
+  tmp/<job_id>/    下载的待打印文件（gitignore）；log/agent.log 日志（gitignore）
+setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（bat 必须纯 ASCII + CRLF）
+```
+
+## 常用命令
+
+> Windows 上 **npm 脚本被 ExecutionPolicy 禁用 → 一律 `npm.cmd`**。
+
+- 后端：`backend\.venv\Scripts\python.exe backend\main.py`（uvicorn **8301**，`reload=False`，改代码后手动重启）
+- 前端：`npm.cmd run dev`（Vite 3010，`/api` 代理 `127.0.0.1:8301`）
+- 前端类型/构建验证：`npm.cmd run build`（`tsc --noEmit && vite build`，**类型错误会阻断构建**）
+- 一键：`setup.bat`（建 venv + 装依赖 + `npm.cmd install` + 构建前端）/ `run.bat`（无窗口起后端 + 代理）/ `stop.bat`（调 `stop.ps1`，按端口与路径精确停本项目进程，**不碰 index/antiClass**）
+- 代理：`--selftest`（自检）/ `--printers`（列打印机）/ `--once`（只跑一轮，调试用）/ `--dry-run`（只打命令行不出纸）
+- **服务常驻方式（已实测）**：`schtasks /Create /TN AntiPrintRun /TR "cmd /c <仓库>\run.bat" /SC ONCE /ST 00:00 /F` → `/Run` → 删除任务，进程仍活着。`run.bat` 内部用 `start ""` + **绝对路径**拉起 `pythonw.exe`（相对路径会让 stop.ps1 匹配不到）；不要内联 `Start-Process`（会被工具会话回收）。Git Bash 里调 schtasks 要先 `export MSYS_NO_PATHCONV=1`，否则 `/Create` 被当成路径。
+- **无 linter、无测试框架**。验证方式：`curl http://127.0.0.1:8301/api/health` + `npm.cmd run build` 通过 + 真实打印一张测试页（见「验证记录」）
+- **单条 Bash 调用必须秒级返回（目标 <10 秒）**：重启、curl、构建分成独立调用，不要串联
+- 启动服务用 agent 内部终端（`run_in_background`），**不要开新的 cmd/PowerShell 窗口**（用户明确要求）
+
+## 打印代理（本项目最关键，改前通读）
+
+- **技术栈约束**：Python + `requests`，**不依赖 pywin32**（本机默认 Python 3.14 没装 pywin32，只有 conda 里有）。打印机枚举用 PowerShell `Get-Printer`，不要 `win32print`。
+- **静默打印命令**：`SumatraPDF.exe -print-to "<打印机名>" -silent -exit-when-done <文件>`；本机路径 `C:\Users\86133\AppData\Local\SumatraPDF\SumatraPDF.exe`（3.6.1，未入 PATH）。打默认打印机用 `-print-to-default`。
+- **P1106 是主机型（GDI）打印机**：必须经 Windows 打印驱动渲染输出（SumatraPDF 走 GDI 正好合适）；**禁止往 USB/RAW 端口灌 PDF 原始字节**（该机型不支持 PDF/PCL 直通，只会打出乱码或失败）。
+- **任务获取**：轮询（默认 3~5 秒，项目不引 websocket/SSE）。领取必须**原子**：服务端 `UPDATE print_jobs SET status='打印中', agent_id=? WHERE id=? AND status='已通过'`，影响行数为 0 即视为被别的代理抢走 → **防重复打印**（唯一一台打印机的出纸是不可逆操作）。
+- **鉴权**：设备令牌（请求头 `X-Agent-Token`，独立于用户 JWT），代理启动时注册/心跳写 `agents` 表（hostname、版本、last_seen、上报的本地打印机列表）；管理页显示「代理在线/离线」，离线时仍可批准入队但要提示管理员。
+- **上报**：`POST /api/agent/jobs/{id}/result`，成功写 `已打印` + `printed_at`；失败写 `打印失败` + 错误文本（退出码/超时/SumatraPDF stderr）。
+- **失败判定**：退出码非 0、进程超时、打印子进程满 90 秒、打印机队列不可用都要判失败；**不要**仅凭 SumatraPDF 退出码为 0 就认定出纸（纸张/缺纸/离线队列要靠状态回读兜底），必要时用 `Get-PrintJob` 复核队列。
+- **目标打印机必须是真实队列（HP LaserJet Professional P1106）**：选成虚拟队列（`Microsoft Print to PDF`、OneNote）时 SumatraPDF `-silent` 会卡到 90 秒超时（等保存文件对话框），任务最终判「打印失败」——2026-09-14 18:41 实测过一次（管理员在管理页把打印机改成了 Microsoft Print to PDF）。管理页改过「打印设置」后务必回读确认存的是 P1106。
+- **代理是单线程循环**：打印期间（最长 90 秒超时）不心跳也不领任务，管理页会把「最后心跳」判成离线 —— 属正常现象，别误判为代理挂了（看 `agent/log/agent.log` 是否还在推进）。
+- **任务在打印途中被管理员删除**：代理回报会拿到 404 并重试 3 次后放弃（日志有明确说明），属预期行为。
+- **常驻方式**：`schtasks` 开机任务（`/sc onlogon`）+ `pythonw.exe` 无窗口运行，日志重定向 `agent/log/`。**pythonw 下 `sys.stdout/stderr` 为 None，代码必须兼容**（不兼容会直接崩，`antiClass` 踩过）；打印子进程必须 `CREATE_NO_WINDOW`，否则反复闪黑窗（`index` 踩过）。
+- **「默认启动器」**（管理设置页可选，存 `settings` 表下发给代理，断网时用 `agent/config.json` 兜底）：① 启动器程序：SumatraPDF / 系统默认关联程序；② 目标打印机：代理上报的本地队列列表（默认 P1106）；③ 打印参数：份数 / 双面 / 纸张；④ 是否打印封面页（待确认，见下）。
+- **开关值一律用 `truthy()` 解析**（`print_agent.py` 顶层）：服务端 `settings` 存的是字符串 `'0'`/`'1'`，`bool('0')` 恒为 `True` —— 曾因此让代理永远只干跑却回报「已打印」。新增任何服务端布尔配置都必须走它。
+- **演练模式（dry-run）也会把任务回报成「已打印」**：它只验链路不出纸，别拿它当出纸验证；真要验证出纸必须关掉演练打一张真页。
+- `--selftest` / `--printers` / `--once` / `--dry-run` 四个开关覆盖了排查全流程；单实例锁（`agent.lock`）会拦住第二个代理，避免重复出纸。
+
+## 任务状态机
+
+`待审核 → 已通过 → 打印中 → 已打印 →（按配送方式）待配送 / 待取件 → 已完成`；异常支线 `已驳回`（**驳回必填理由**，允许提交人改后重提）、`打印失败`（可重试，回退到「已通过」重新入队）。**每次流转写 `print_jobs_logs` 留痕**（操作者、时间、原状态→新状态、备注）。状态取值用固定中文字符串，前后端共享，改动需两端同步（放 `backend/constants.py` + `frontend/src/constants.ts`）。
+
+**配送方式与交接流转（2026-09-14 新增）**：
+
+- 每个任务带 `delivery_mode`（`配送` / `取件`）：提交页选，留空时取用户配置 `users.default_delivery`；**配送单必须填地址，取件单地址可空**（库里存空串）。
+- 出纸后由管理员在**任务队列页**勾选交接（`POST /api/jobs/{id}/advance`，body `{to}`）：`已打印` → `待配送`（仅配送单）/ `待取件`（仅取件单）→ `已完成`（写 `finished_at`）。
+- 允许的流转集中在 `constants.HANDOVER_NEXT`（`{当前状态: {目标状态: 该目标要求的配送方式}}`），**服务端强校验**：配送单不能标「待取件」，反之亦然；重复标记、越级流转一律 400。改状态机只改这一张表 + 两端 constants。
+- 用户侧在「我的任务」看到同样的徽章与提示（待配送=等待管理员送达、待取件=到打印点自取、已完成=完成时间）。
+
+## 数据库（MySQL 8）
+
+- 连接配置：`backend/db_config.json`（gitignore）—— 模板 `backend/db_config.example.json`；环境变量 `MYSQL_HOST/PORT/USER/PASSWORD/DB` 可覆盖；默认库 `antiprint`（utf8mb4）。密码字符集只用字母数字 `_` `-`（含 `@` 会破坏 URL 拼接，`index` 出过事故）。
+- 启动自动建库建表；**`create_all` 不给已存在的表补列** → 新增列必须同步写进 `db.py` 的 `run_migrations()`，否则旧库报 `Unknown column`（`index` 反复踩过）。
+- 表：`users`（含 role、`source`、`anticraft_id`、`default_address` 默认配送地址、`default_delivery` 默认配送方式）、`print_jobs`（status/address/note/reject_reason/print_error/agent_id/`delivery_mode` 配送方式/claimed_at/printed_at/`finished_at` 完成时间）、`print_job_files`（任务文件）、`print_jobs_logs`（流转留痕）、`agents`（设备+心跳+能力）、`settings`（k/v：agent_token、启动器、打印机、份数、dry_run、anticraft_* 等）。
+- **`set_status()` 只认白名单字段**（`allowed = {reject_reason, print_error, finished_at}`）：新增「随状态一起写」的列，必须同时加进这个集合，否则会被静默丢弃（2026-09-14 踩过：`finished_at` 没写进去）。
+- **`settings` 的值全是字符串**（如 copies=`'1'`、dry_run=`'0'`）：后端读出来要按字符串用，代理侧开关判断必须走 `truthy()`（见打印代理一节）。
+- `list_jobs` / `get_job` 已 JOIN `users` 带出 `username`（管理页「提交人」列），改 SQL 时别丢这个字段。
+- `users.source`：`local`（AntiPrint 自建）/ `anticraft`（anticraft 账号自动创建）。`set_user_password()` 用于 anticraft 侧改密后同步本地密码；`create_user(username, hash, role, source)` 的第四个参数别漏。
+- 账号相关接口（`/api/login`、`/api/login/anticraft`）**共用同一个 IP 限速桶（10 次/分钟）**：写自动化测试脚本时会连续触发 429（这是功能正常的信号）。测试要分批跑或等 60 秒窗口；重启后端可清空内存里的计数器。
+- 多步写操作走事务（`db.tx()` 风格）。
+
+## 认证与权限
+
+- 复用 `D:\anticraft\index` 的模式：**SHA-256 预哈希 → bcrypt**（绕过 72 字节限制，直接 `import bcrypt`，不用 passlib）、**pyjwt HS256 24h**（不用 python-jose，避免 C 扩展编译）。
+- 前端 token 存 `localStorage.token`、用户信息 `localStorage.user`，请求头 `Authorization: Bearer <token>`；**所有带 token 的请求必须走 `api.ts` 的 `request()`**（统一 401 拦截 → 清 localStorage → 弹「登录已过期」，绕开就丢这套行为）。
+- 权限：`users.role` 为 `user`/`admin`，后端 `require_admin` 依赖拦截 403。默认管理员播种（`ADMIN_PASSWORD` 环境变量可覆盖），登录限速（5 次/分钟/IP）。
+- **文件下载/预览必须鉴权**：仅任务提交人本人或管理员可取，带 `Content-Disposition` + `X-Content-Type-Options: nosniff`；`agents` 令牌只能领取/回报任务，**不得读他人文件**。
+
+## 上传与安全
+
+- 单文件 ≤10MB、单任务 ≤5 个文件；**扩展名黑名单**（可执行/脚本/网页/Office 宏等一律 400，沿用 `antiClass` 的 `DANGEROUS_EXT` 思路）；sha256 内容去重；文件名净化 + 防目录穿越（存 `backend/data/uploads/<job_id>/`，库内存相对路径）。
+- 白名单优先：可静默打印的 **PDF / png / jpg** 直接放行，其余类型按「已知未定义」处理。
+
+## 前端约定
+
+- **技术栈**：React 18 + Vite + TypeScript（strict）+ **Tailwind CSS v4**（`@tailwindcss/vite` 插件，无 config 文件，token 写在 `src/index.css` 的 `@theme`）+ **lucide-react** 图标。**不要**再写页面私有 CSS 文件、不要引入其它 UI 组件库、**禁止 emoji**。
+- **设计 token（`src/index.css`，语义色勿散落 hex）**：`bg-warm`(#faf8f5 暖米白底) / `bg-brand`(#4a9d9a 青绿主色) / `bg-amber`(#e8b86d) / `bg-clay`(#c17767 警示) / `bg-slate-teal`(#6b8e8e)；深色底 `bg-ink`(#1f1f1e) / `bg-ink-soft`(#2b2b2a 卡片)；阴影 `shadow-card`(极低透明度大扩散) / `shadow-brand`；字体 `font-sans` 已在 base 层设置。
+- **深色模式**：`@custom-variant dark` 绑定到 `<html data-theme="dark">`（由 `ThemeToggle` 三态开关写入）。**每个颜色/边框/底色类都要配 `dark:` 变体**（卡片 `dark:bg-ink-soft`、边框 `dark:border-white/10`、次级底 `dark:bg-white/5`）。
+- **常用配方（照抄，保证全站一致）**：
+  - 卡片：`rounded-2xl bg-white p-6 shadow-xl shadow-black/[0.04] dark:bg-ink-soft`；需要悬浮感再加 `transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl`
+  - 主按钮：`inline-flex items-center gap-2 rounded-xl bg-brand px-5 py-2.5 text-sm font-medium text-white shadow-lg shadow-brand/25 transition-all duration-200 hover:bg-brand-dark hover:shadow-xl hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60`
+  - 次按钮：`inline-flex items-center gap-1.5 rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-gray-600 shadow-lg shadow-black/5 hover:-translate-y-0.5 hover:shadow-xl dark:bg-ink-soft dark:text-gray-300`
+  - 危险按钮：次按钮基础上换 `bg-clay text-white shadow-clay/25`
+  - 输入/文本域：`w-full rounded-xl border border-gray-200 bg-warm px-4 py-2.5 text-sm text-gray-800 placeholder:text-gray-400 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30 dark:border-white/10 dark:bg-white/5 dark:text-gray-100`
+  - 表格：`w-full` + 表头 `border-b border-gray-100 dark:border-white/10` 与 `px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-400` + 行 `group border-b border-gray-50 transition-colors hover:bg-warm dark:border-white/5 dark:hover:bg-white/5`；行内操作按钮用 `opacity-0 transition-opacity group-hover:opacity-100`
+  - 徽章：`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium`，配色一律「同色 10% 底 + 本色字」
+  - 弹窗：遮罩 `fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm`，面板 `w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-ink-soft`
+  - 空状态：`flex flex-col items-center gap-3 rounded-2xl border border-dashed border-gray-200 bg-white/60 px-6 py-16 text-center text-sm text-gray-400 dark:border-white/10 dark:bg-white/5`
+  - 提示条：`flex items-start gap-2 rounded-xl px-4 py-3 text-sm` + 语义色
+- **状态徽章取色**（6 个状态，勿改）：待审核 `bg-amber/15 text-amber-700 dark:text-amber`；已通过 `bg-brand/10 text-brand-dark dark:text-brand`；打印中 `bg-slate-teal/15 text-slate-teal`；已打印 `bg-emerald-500/10 text-emerald-600 dark:text-emerald-400`；已驳回 `bg-clay/10 text-clay`；打印失败 `bg-red-500/10 text-red-600 dark:text-red-400`。
+- **图标**：一律 `lucide-react`（`h-4 w-4` 行内 / `h-5 w-5` 标题与品牌 / `h-[18px] w-[18px]` 侧栏导航）；`components/Icons.tsx` 已废弃删除，不要再 import。
+- **外壳**：`App.tsx` 是参考实现——已登录 = 240px 可折叠侧栏（`w-60`↔`w-0`，主区 `ml-60`↔`ml-0` 过渡）+ 吸顶栏（`sticky top-0 bg-warm/80 backdrop-blur-md`，标题取自 `PAGE_META`）+ 右下角 toast；未登录 = 只有品牌条（登录页/回调页）。新页面照此风格写，不要再造导航。
+- 复用组件（勿重造）：`Modal`（确认弹窗统一用它，不用 `window.confirm`）、`DropZone`、`FileChips`、`TextField`（所有文本输入）、`ThemeToggle`。
+- react-router-dom v7，路由集中在 `App.tsx`，页面在 `src/pages/`。
+- 管理端预览 PDF 用**同源** blob→iframe（`/api/jobs/{id}/files/{fid}`，需 Bearer 头，所以走 `fetch` + `URL.createObjectURL`，关闭时 `revokeObjectURL`）；跨域源无法内嵌预览。
+- UI 文案、注释、文档、提交信息**一律简体中文**；提交信息结构化（单行标题概括整批 + 正文按模块分节）。
+
+## 部署（Windows → 阿里云 47.100.125.150）
+
+- 生产：`/var/www/antiprint`，systemd 单元 `antiprint-api`，nginx 子域名（候选 `print.anticraft.top`，**待用户确认**）→ `127.0.0.1:8301`；**生产由 FastAPI 静态托管 `frontend/dist`，单进程访问整个站点**（同 `antiClass`）。服务器已占用端口参考：index 8000、antiClass 8100、GEOMind 18000。
+- **打印代理不部署在服务器**，只跑在管理员这台 Windows 上（服务器在阿里云，够不到本机 USB 打印机）。
+- **部署红线（硬性）**：未经用户明确同意，禁止运行任何部署脚本或发布到服务器；**代理不得读取、展示或上传 `deploy*.bat` 等脚本中的任何凭据**——凭据只由用户本人使用。功能完成后只启动本地服务供验收，等用户说「发布到服务器并 git」再部署。
+- 兄弟项目做法：部署脚本含凭据、已 gitignore、仅本机存在（参考 `index/deploy.bat` 家族）；**不要提交任何含凭据的文件**。
+
+## 已知未定义（实现前须与用户确认，勿臆测）
+
+1. **Office（docx/xlsx/pptx）如何转 PDF 才能静默打印** —— 需本机 Office/WPS COM 还是 LibreOffice headless？在确认前，Office 文件应按「不支持静默打印」明确拒绝或提示。
+2. 配送地址是否要打印成**封面页/面单**（当前默认：仅线上跟踪，不打印）。
+3. 用户注册是否需要**邀请码**（`index` 用邀请码门控），还是管理员建号。
+4. 域名（`print.anticraft.top`？）与最终端口分配。
+5. 是否需要多台打印代理 / 多管理员；打印配额与限流（如每用户每天 N 单）。
+6. 任务列表刷新方式与轮询间隔（当前默认 5 秒轮询）。
+7. 图片类任务的多页排布规则（一张/多张图如何分页、是否缩放到 A4）。
+
+## 环境事实与坑（Windows 本机）
+
+- 默认打印机 `HP LaserJet Professional P1106`；同机还有其他虚拟队列（`Microsoft Print to PDF`、OneNote）——**选打印机时不要用「默认」二字想当然**，按名称精确指定。
+- SumatraPDF 3.6.1 在 `C:\Users\86133\AppData\Local\SumatraPDF\SumatraPDF.exe`（**不在 PATH**，用绝对路径；`SumatraPDF-settings.txt` 里有 `PrinterDefaults`，会记住上次的打印机/份数，排查「参数不生效」时先看它）。
+- 浏览器：Chrome `C:\Program Files\Google\Chrome\Application\chrome.exe`、Edge `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`（仅用于本地验证管理页；**打印不走浏览器**）。
+- **本机端口占用（2026-09-14 实测）**：3000（index 前端）、8000（index 后端）、3306（MySQL）、**8300 与 12390/14013-14023 被 natpierce.exe（内网穿透工具，用户自己在跑，勿杀）占用**。AntiPrint 用 **3010 / 8301**，两端口实测可绑定（绑 8300 会报 WinError 10013）。Windows 保留端口区间（2869、50000-50059）不与本次端口冲突。
+- Shell 为 Git Bash / PowerShell；npm 脚本被 ExecutionPolicy 禁用 → **用 `npm.cmd`**；**pip 全局配置指向清华镜像，对 Python 3.14 会返回空**（报「Could not find a version that satisfies the requirement fastapi (from versions: none)」）→ 必须加 `-i https://mirrors.aliyun.com/pypi/simple/`（`setup.bat` 已内置）。
+- **Git Bash 调 schtasks 要先 `export MSYS_NO_PATHCONV=1`**，否则 `/Create`、`/Run` 被 MSYS 当路径转换成 `C:/Program Files/Git/Create` 而报错。
+- **`.bat` 里不要写多行 `^` 折行的 PowerShell**（实测静默不执行）→ 复杂逻辑放 `.ps1`，bat 只做 `powershell -File "%~dp0xxx.ps1"` 调用；`.bat` 必须纯 ASCII + CRLF。
+- **venv 的 `pythonw.exe` 是启动器**，会再拉起一个 `C:\Python314\pythonw.exe` 子进程 —— 数进程时会看到成对出现，属正常；判断「是否重复启动」以端口监听数 + `agent.lock` 为准。
+- **anticraft 登录怎么测**：优先用**本机跑着的 anticraft**（`D:\anticraft\index`，前端 Vite `http://localhost:3000`、后端 `127.0.0.1:8000`，绑定接口齐全）——把「打印设置」的 `anticraft_base` 指到 `http://localhost:3000`，就能跑**真实**的跳转授权（`.tmp-test/ui-test7.mjs` 用 index 文档里的本地测试账号 `demotools/DemoTools123` 注入登录态后点「同意绑定」，7 项全通过）。**回调地址逐个精确匹配**：本机 anticraft 里当前只登记了 `http://127.0.0.1:8301/api/oauth/anticraft/callback`（应用名 `antiprintlocal`），所以要用 8301 访问本项目；想用 Vite 3010 测，得先去本机 anticraft 管理后台把 `http://localhost:3010/api/oauth/anticraft/callback` 也加进该应用的回调列表。若手上没有真实账号可用 `.tmp-test/mock_anticraft.py`（`uvicorn mock_anticraft:app --port 8302`，在 `.tmp-test` 目录下跑）顶替，测完把 `anticraft_base` 改回目标地址。注意 `stop.bat` 会连 mock 一起杀掉（它用的是本项目 venv），重启后端后记得重新拉起 mock。
+- **本机 vs 线上 anticraft 切换**：`anticraft_base` 一个字段搞定（`http://localhost:3000` ↔ `https://anticraft.top`）；两边各自维护白名单，`client_id`/`client_secret` 不同，切换时要连服务地址一起换。`anticraft.top` 目前**尚未登记**本应用（2026-09-14 公开接口查 `ac_...` 返回 404），线上启用前需在 anticraft.top 后台登记同一个回调地址。
+- **前端 CSS 覆盖全局类必须提高优先级**：页面 CSS 里写 `.alert.xxx { display: block }` 这类覆盖，**不能只写 `.xxx`** —— 打包后全局 `index.css` 排在页面 CSS 之后，同优先级下后写的生效（2026-09-14 实测：登录页告警被 `.alert` 的 flex 拆成三栏竖排）。
+- **UI 自动化验证环境**（项目本身不装测试依赖）：复用 `D:\anticraft\index\node_modules\playwright-core` + 本机 chromium `C:\Users\86133\AppData\Local\ms-playwright\chromium-1234\chrome-win64\chrome.exe`，脚本在 `.tmp-test/`（临时文件，可删）。**别用 `input[type=text]` 选配送地址**（`TextField` 不写 `type`，会选到备注 textarea/文件输入框，浪费一轮）。
+- 优先移植兄弟项目实现，**不引入新依赖**（`index` 的 `auth.py`/`db.py`、`antiClass` 的 `save_upload`/驳回-重提流程可直接借鉴）。
+- 已有兄弟项目文档可查：`D:\anticraft\index\AGENTS.md`（认证、部署、坑最全）、`D:\anticraft\antiClass\AGENTS.md`（上传/审批/单进程托管）。
+
+## 验证清单（每次交付前逐条过）
+
+1. `curl http://127.0.0.1:8301/api/health` 通，且 `curl http://127.0.0.1:8301/` 返回前端页面（后端单进程托管 dist）；
+2. `npm.cmd run build` 无类型错误；
+3. 接口链路：`backend\.venv\Scripts\python.exe .tmp-test\e2e.py`（28 项）全绿；
+4. UI 链路：`node .tmp-test\ui-test3.mjs` 全绿（登录/提交/同意/驳回/预览/代理在线）；
+5. **真实出纸**：管理页同意一单 → 代理 `--once`（演练必须关闭）→ 任务转「已打印」+ 打印机队列清空（静默打印链路必须真机验证，不能只看接口返回）；
+6. 重启后端/代理后状态不丢（状态在 MySQL，不在内存）。

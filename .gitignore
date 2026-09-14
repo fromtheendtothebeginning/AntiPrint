@@ -1,0 +1,35 @@
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+
+# 依赖与构建产物
+node_modules/
+frontend/dist/
+
+# 本机配置与数据（含凭据，禁止提交）
+backend/.env
+backend/db_config.json
+backend/data/
+backend/log/
+agent/config.json
+agent/log/
+agent/tmp/
+agent/agent.lock
+
+# 部署脚本（含服务器凭据，仅本机存在）
+deploy*.bat
+*deploy-config*
+
+# 临时验证产物（测试脚本可留、截图不入库）
+.tmp-test/shots/
+
+# 编辑器/系统
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+*.log
+
+# 会话/计划产物
+.zcode/
