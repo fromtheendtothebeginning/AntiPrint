@@ -33,3 +33,6 @@ desktop.ini
 
 # 会话/计划产物
 .zcode/
+
+# 线上代理配置（含线上令牌，禁止提交）
+agent/config.prod.json
