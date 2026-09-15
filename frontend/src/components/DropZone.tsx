@@ -155,10 +155,10 @@ function DropZone({
 
           <div className="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-white/10 dark:bg-ink">
             {previewUrl && kind === 'pdf' && (
-              <iframe className="h-[320px] w-full" src={previewUrl} title={activeFile.name} />
+              <iframe className="h-[480px] w-full" src={previewUrl} title={activeFile.name} />
             )}
             {previewUrl && kind === 'image' && (
-              <img className="mx-auto max-h-[320px]" src={previewUrl} alt={activeFile.name} />
+              <img className="mx-auto max-h-[480px]" src={previewUrl} alt={activeFile.name} />
             )}
             {previewUrl && kind === 'other' && (
               <p className="px-4 py-8 text-center text-xs text-gray-400">

@@ -98,11 +98,11 @@ function FilePreview({ open, filename, jobId, fileId, localUrl, onClose }: FileP
       )}
 
       {!loading && !error && url && kind === 'pdf' && (
-        <iframe className="h-[70vh] w-full rounded-xl border border-gray-100 dark:border-white/10" src={url} title={filename} />
+        <iframe className="h-[80vh] w-full rounded-xl border border-gray-100 dark:border-white/10" src={url} title={filename} />
       )}
 
       {!loading && !error && url && kind === 'image' && (
-        <img className="mx-auto max-h-[70vh] rounded-xl" src={url} alt={filename} />
+        <img className="mx-auto max-h-[80vh] rounded-xl" src={url} alt={filename} />
       )}
 
       {!loading && !error && url && kind === 'other' && (
