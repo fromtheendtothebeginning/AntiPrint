@@ -99,6 +99,9 @@ SETTINGS_DEFAULTS = {
     "printer_name": config.DEFAULT_PRINTER,
     "copies": "1",
     "dry_run": "0",
+    # 打印代理连接开关：'1' = 正常（默认），'0' = 管理员在管理设置里「断开连接」，
+    # 此时代理的注册/心跳/领取/下载/回报一律 403（见 agent_api.require_agent），恢复后自动续上
+    "agent_enabled": "1",
     "anticraft_base": "https://anticraft.top",
     "anticraft_client_id": "",
     "anticraft_client_secret": "",

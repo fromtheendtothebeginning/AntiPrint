@@ -105,6 +105,8 @@ export interface Settings {
   anticraft_origins: string
   /** anticraft 管理员用户名（逗号分隔）：这些账号用 anticraft 登录/绑定时本地给 admin */
   anticraft_admin_users: string
+  /** 打印代理连接开关：'1' = 已连接（默认），'0' = 管理员在管理设置里断开了代理 */
+  agent_enabled: string
 }
 
 /** anticraft 授权码登录的配置状态：enabled 为 false 时登录页禁用跳转按钮 */

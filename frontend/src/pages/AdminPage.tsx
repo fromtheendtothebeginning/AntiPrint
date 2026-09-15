@@ -8,10 +8,12 @@ import {
   Copy,
   ListChecks,
   Loader2,
+  Plug,
   Printer,
   RefreshCw,
   RotateCcw,
   Settings,
+  Unplug,
   Wifi,
   WifiOff,
 } from 'lucide-react'
@@ -60,6 +62,11 @@ function isEnabled(value: string | null | undefined): boolean {
 function AdminPage() {
   const [agents, setAgents] = useState<Agent[]>([])
   const [agentOnline, setAgentOnline] = useState(false)
+  /** 代理连接开关（'0' = 已被管理员断开）：断开时代理所有请求 403 */
+  const [agentEnabled, setAgentEnabled] = useState(true)
+  const [agentLinkBusy, setAgentLinkBusy] = useState(false)
+  /** 断开连接确认弹窗（重新连接不需要确认） */
+  const [disconnectOpen, setDisconnectOpen] = useState(false)
   const [error, setError] = useState('')
   const [refreshing, setRefreshing] = useState(false)
   const [notice, setNotice] = useState('')
@@ -88,6 +95,7 @@ function AdminPage() {
       const data = await api.getSettings()
       setAgents(data.agents)
       setAgentOnline(data.agent_online)
+      setAgentEnabled(isEnabled(data.settings.agent_enabled))
       setError('')
     } catch (err) {
       setError(getErrorMessage(err))
@@ -114,6 +122,7 @@ function AdminPage() {
       setAnticraftOrigins(saved.anticraft_origins ?? '')
       setAgents(data.agents)
       setAgentOnline(data.agent_online)
+      setAgentEnabled(isEnabled(data.settings.agent_enabled))
       setSettingsError('')
       setError('')
     } catch (err) {
@@ -143,6 +152,30 @@ function AdminPage() {
     const timer = setTimeout(() => setCopied(false), 2000)
     return () => clearTimeout(timer)
   }, [copied])
+
+  /** 断开 / 重新连接打印代理：成功后用返回的最新状态刷新代理区 */
+  async function handleAgentLink(connected: boolean) {
+    setAgentLinkBusy(true)
+    setNotice('')
+    try {
+      const data = await api.setAgentLink(connected)
+      setAgents(data.agents)
+      setAgentOnline(data.agent_online)
+      setAgentEnabled(isEnabled(data.settings.agent_enabled))
+      setSettings((prev) => (prev ? { ...prev, agent_enabled: data.settings.agent_enabled } : prev))
+      setNotice(
+        connected
+          ? '打印代理已重新连接，代理会在下个心跳（最多 30 秒）内自动恢复领任务'
+          : '已断开打印代理：它不会再领取任务，已通过的任务会排队等待，恢复后自动继续',
+      )
+      setError('')
+    } catch (err) {
+      setError(getErrorMessage(err))
+    } finally {
+      setAgentLinkBusy(false)
+      setDisconnectOpen(false)
+    }
+  }
 
   /** 刷新：重新读取设置与代理状态；15 秒轮询只刷新代理状态 */
   async function handleRefresh() {
@@ -240,24 +273,28 @@ function AdminPage() {
         </p>
       )}
 
-      {/* 打印代理状态：红绿圆点 + 在线/离线文案，离线时给出警示 */}
+      {/* 打印代理状态：圆点 + 在线/离线/已断开文案；可在此断开或重新连接代理 */}
       <section className={`${CARD} flex flex-wrap items-center gap-4`}>
         <span className="relative flex h-3 w-3 shrink-0" aria-hidden="true">
-          {agentOnline && (
+          {agentOnline && agentEnabled && (
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
           )}
           <span
-            className={`relative inline-flex h-3 w-3 rounded-full ${agentOnline ? 'bg-emerald-500' : 'bg-red-500'}`}
+            className={`relative inline-flex h-3 w-3 rounded-full ${
+              !agentEnabled ? 'bg-gray-400' : agentOnline ? 'bg-emerald-500' : 'bg-red-500'
+            }`}
           />
         </span>
         <div className="min-w-[220px] flex-1">
           <p className="flex items-center gap-2 text-sm font-semibold text-gray-800 dark:text-gray-100">
-            {agentOnline ? (
+            {!agentEnabled ? (
+              <Unplug className="h-4 w-4 text-gray-400" />
+            ) : agentOnline ? (
               <Wifi className="h-4 w-4 text-emerald-500" />
             ) : (
               <WifiOff className="h-4 w-4 text-red-500" />
             )}
-            {agentOnline ? '打印代理在线' : '打印代理离线'}
+            {!agentEnabled ? '打印代理已断开' : agentOnline ? '打印代理在线' : '打印代理离线'}
           </p>
           <p className="mt-1 text-xs text-gray-400">
             {agents.length === 0
@@ -279,13 +316,74 @@ function AdminPage() {
           {refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
           刷新
         </button>
-        {!agentOnline && (
+        {agentEnabled ? (
+          <button
+            type="button"
+            className={BTN_SM_DANGER}
+            disabled={agentLinkBusy}
+            onClick={() => setDisconnectOpen(true)}
+          >
+            {agentLinkBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Unplug className="h-4 w-4" />}
+            断开连接
+          </button>
+        ) : (
+          <button
+            type="button"
+            className={BTN_SM_SECONDARY}
+            disabled={agentLinkBusy}
+            onClick={() => void handleAgentLink(true)}
+          >
+            {agentLinkBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plug className="h-4 w-4" />}
+            重新连接
+          </button>
+        )}
+        {!agentEnabled && (
+          <p className={`${ALERT_WARN} w-full`}>
+            <Unplug className="mt-0.5 h-4 w-4 shrink-0" />
+            已断开：打印代理的注册、心跳、领取任务、下载文件与回报都会被拒绝（本机代理进程仍在运行，只是连不上服务端）。
+            已通过的任务只是排队等待，点「重新连接」后最多 30 秒自动恢复。
+          </p>
+        )}
+        {agentEnabled && !agentOnline && (
           <p className={`${ALERT_WARN} w-full`}>
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
             代理离线时任务会堆积在队列中，审核通过后需等代理上线才会出纸
           </p>
         )}
       </section>
+
+      {/* 断开连接确认（可逆操作，但会停止出纸，所以二次确认） */}
+      <Modal
+        open={disconnectOpen}
+        title="断开打印代理连接"
+        size="sm"
+        danger
+        onClose={() => setDisconnectOpen(false)}
+        footer={
+          <>
+            <button type="button" className={BTN_SM_SECONDARY} onClick={() => setDisconnectOpen(false)}>
+              取消
+            </button>
+            <button
+              type="button"
+              className={BTN_SM_DANGER}
+              disabled={agentLinkBusy}
+              onClick={() => void handleAgentLink(false)}
+            >
+              {agentLinkBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Unplug className="h-4 w-4" />}
+              断开连接
+            </button>
+          </>
+        }
+      >
+        <p className="text-sm text-gray-600 dark:text-gray-300">
+          断开后，打印代理的<strong>注册、心跳、领取任务、下载文件、回报结果</strong>都会被服务端拒绝，
+          期间<strong>不会有任何任务出纸</strong>，已通过的任务只是排队等待。
+        </p>
+        <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+          本机代理进程不受影响、会继续轮询；随时可以在本页点「重新连接」恢复（最多 30 秒生效）。
+        </p>
+      </Modal>
 
       {/* 打印设置 */}
       <section className={CARD}>

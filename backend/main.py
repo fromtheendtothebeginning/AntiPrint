@@ -34,6 +34,7 @@ import config
 import constants
 import convert
 import db
+import agent_api
 from agent_api import router as agent_router
 
 # ── pythonw 兼容：pythonw.exe 下 sys.stdout/stderr 为 None，uvicorn 与 logging 会直接抛错
@@ -136,7 +137,9 @@ def _anticraft_request(url: str, payload: dict | None = None, token: str | None 
 
 
 def _agent_online(agents: list) -> bool:
-    """是否有代理在 90 秒内上报过心跳"""
+    """是否有代理在 90 秒内上报过心跳；管理员已断开连接时一律算「不在线」"""
+    if not agent_api.agent_enabled():
+        return False
     now = datetime.now()
     for agent in agents:
         last_seen = agent.get("last_seen")
@@ -1252,6 +1255,24 @@ def rotate_agent_token(user: dict = Depends(auth.require_admin)):
     db.set_settings({"agent_token": token})
     logger.info("管理员 %s 轮换了打印代理令牌", user["username"])   # 不打印令牌本身
     return {"agent_token": token}
+
+
+class AgentLinkBody(BaseModel):
+    """代理连接开关：true = 连接（默认），false = 断开"""
+    connected: bool
+
+
+@app.post("/api/settings/agent-link")
+def set_agent_link(body: AgentLinkBody, user: dict = Depends(auth.require_admin)):
+    """断开 / 重新连接打印代理。
+
+    断开后代理的注册、心跳、领取、下载、回报一律 403（代理会记一条日志并继续轮询，
+    重连后自动续上）；期间已通过的任务只是排队等待，不会被领取。
+    """
+    db.set_settings({"agent_enabled": "1" if body.connected else "0"})
+    logger.info("管理员 %s %s了打印代理连接", user["username"], "恢复" if body.connected else "断开")
+    agents = db.list_agents()
+    return {"settings": _masked_settings(), "agents": agents, "agent_online": _agent_online(agents)}
 
 
 # ── 静态托管：生产由 FastAPI 单进程托管前端 dist ──

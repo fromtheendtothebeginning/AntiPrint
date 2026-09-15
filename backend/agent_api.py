@@ -37,11 +37,19 @@ class ResultBody(BaseModel):
     error: str | None = None
 
 
+def agent_enabled() -> bool:
+    """代理连接开关：管理员在管理设置里「断开连接」后为 False（值存 settings.agent_enabled）"""
+    return str(db.get_settings().get("agent_enabled", "1")).strip() != "0"
+
+
 def require_agent(x_agent_token: str = Header(default="")) -> bool:
-    """代理鉴权依赖：X-Agent-Token 必须与 settings.agent_token 一致，否则 401"""
+    """代理鉴权依赖：X-Agent-Token 必须与 settings.agent_token 一致，否则 401；
+    管理员断开连接后（agent_enabled='0'）一律 403，代理会记日志并继续轮询，重连后自动续上。"""
     expected = db.get_settings().get("agent_token") or ""
     if not expected or not hmac.compare_digest(x_agent_token or "", expected):
         raise HTTPException(status_code=401, detail="打印代理令牌无效")
+    if not agent_enabled():
+        raise HTTPException(status_code=403, detail="打印代理已被管理员断开连接，请在「管理设置」里重新连接")
     return True
 
 

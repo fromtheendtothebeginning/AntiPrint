@@ -51,6 +51,7 @@
 | 内嵌预览（投放区变预览面板） | `node .tmp-test/ui-test11.mjs` | 12 项全通过：拖入 PDF 后投放提示消失、面板显示「正在预览」并渲染 iframe，继续拖入图片后点文件名可切换（img 出现、iframe 让位）、「放大查看」走弹窗、「清空」回到投放区、提交后我的任务与管理员队列预览仍正常；页面 JS 错误 0 |
 | 队列一行式布局（2026-09-15） | `node .tmp-test/ui-test16.mjs` | 16 项全通过：表头合并成 5 列、**除长地址外每行单行（49px，长地址行允许 101px）**、任务号/提交人/时间同行、文件与各自设置同行、配送徽章与地址同格、驳回理由截断成一行、操作区单行且「同意/驳回/删除」同一 y 坐标、**非地址列内容不溢出（超出即省略号）**、操作列装得下「重新打印/待配送/删除」、1920 视口下表格不横向滚动且操作列完整可见、点「同意」仍可用；页面 JS 错误 0 |
 | Office（Word/PPT）转 PDF（2026-09-15） | `powershell -File .tmp-test/make_office_fixtures.ps1`（造测试件）+ `backend\.venv\Scripts\python.exe .tmp-test/office_convert_test.py`（34 项）+ `node .tmp-test/ui-test17.mjs`（13 项） | API 34 项全通过：提交页预览接口把 docx/pptx 转成 PDF（`%PDF` 头、inline disposition）、非 Office/未登录/超 10MB/假 docx 一律 400、**含 docx+pptx+pdf 的混合任务提交成功且文件名保持原名**、用户与管理员预览拿到的都是转换后的 PDF（`原名.pdf`）而 `?download=1` 给原文件（zip 头 PK）、代理 claim 带 `print_name=原名.pdf` 且下载字节是 PDF、转换缓存按 sha256 命中（mtime 未变）且删任务后清理、docm/pptm 仍拒绝。UI 13 项全通过：投放区文案、转换中「正在把 Word/PPT 转成 PDF…」、右栏 iframe 预览 +「（Word/PPT 已转 PDF）」标注、加 PPT 一起提交成功、「我的任务」与管理员队列点文件名预览的都是 PDF、同意后代理领取到 PDF；页面 JS 错误 0。**本机实测耗时：Word ≈6s、PPT ≈23s**（Office COM；LibreOffice 一般更快） |
+| 代理断开 / 重连（2026-09-15） | `backend\.venv\Scripts\python.exe .tmp-test/agent_link_test.py`（11 项）+ `node .tmp-test/ui-test18.mjs`（13 项） | API：普通用户 403、断开后**注册/心跳/领取/下载/回报五个入口全 403**（提示含「断开」）、断开期间任务仍停「已通过」不被领取、重连后能领到排队任务并正常回报。UI：默认显示在线/离线 + 「断开连接」按钮、点击弹二次确认、断开后状态徽章变「打印代理已断开」且按钮变「重新连接」、服务端确实 403、点「重新连接」恢复且提示消失；页面 JS 错误 0 |
 | Office 转 PDF **线上部署**（2026-09-15） | `bash deploy/pack.sh` → `backend\.venv\Scripts\python.exe .tmp-test/prod_office_check.py`（口令从 `PROD_ADMIN_PW` 环境变量读，脚本不落口令） | 部署后：线上首页引用新 dist（`index-DNmMwP_w.js` 内含「Word/PPT 会先转成 PDF」文案）、`POST /api/preview/office` 返回 401（新接口已上线）、**线上提交 docx 成功且预览拿到 34532B 的 PDF、`?download=1` 给原 zip**、测试任务已删除（未审批 → 不会出纸）；服务器 soffice 用后端同款命令实跑 Word 2.7s / PPT 2.6s |
 
 **测试中修掉的真 bug（勿回退）**：
@@ -101,6 +102,7 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
 - **P1106 是主机型（GDI）打印机**：必须经 Windows 打印驱动渲染输出（SumatraPDF 走 GDI 正好合适）；**禁止往 USB/RAW 端口灌 PDF 原始字节**（该机型不支持 PDF/PCL 直通，只会打出乱码或失败）。
 - **任务获取**：轮询（默认 3~5 秒，项目不引 websocket/SSE）。领取必须**原子**：服务端 `UPDATE print_jobs SET status='打印中', agent_id=? WHERE id=? AND status='已通过'`，影响行数为 0 即视为被别的代理抢走 → **防重复打印**（唯一一台打印机的出纸是不可逆操作）。
 - **鉴权**：设备令牌（请求头 `X-Agent-Token`，独立于用户 JWT），代理启动时注册/心跳写 `agents` 表（hostname、版本、last_seen、上报的本地打印机列表）；管理页显示「代理在线/离线」，离线时仍可批准入队但要提示管理员。
+- **断开连接 / 重新连接（2026-09-15 新增）**：管理页代理区有「断开连接」按钮（二次确认弹窗），开关存 `settings.agent_enabled`（`'1'` 默认 / `'0'` 已断开），接口 `POST /api/settings/agent-link`（body `{connected: bool}`，仅 admin）。断开后 `agent_api.require_agent` 对**注册/心跳/领取/下载/回报一律 403**（中文提示「打印代理已被管理员断开连接」），`_agent_online()` 也直接返回 False（界面立刻显示「已断开」，不等 90 秒超时）。**代理进程不受影响**：`_note_blocked()` 只记一条日志（避免每 5 秒刷屏）、继续轮询，服务端恢复后自动续上（`_note_resumed()`）。断开期间已通过的任务只是排队，不会被领取。
 - **上报**：`POST /api/agent/jobs/{id}/result`，成功写 `已打印` + `printed_at`；失败写 `打印失败` + 错误文本（退出码/超时/SumatraPDF stderr）。
 - **失败判定**：退出码非 0、进程超时、打印子进程满 90 秒、打印机队列不可用都要判失败；**不要**仅凭 SumatraPDF 退出码为 0 就认定出纸（纸张/缺纸/离线队列要靠状态回读兜底），必要时用 `Get-PrintJob` 复核队列。
   实测案例（2026-09-14）：app 里显示「已打印」，但 Windows 打印队列里两条任务长期 `JobStatus=Normal` 不动 —— SumatraPDF 只是把任务交给了打印后台，纸没出来（打印机电源/USB 问题）。**验收出纸时必须查 `Get-PrintJob`，不能只看 app 状态**。
@@ -259,4 +261,5 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
 4. UI 链路：`node .tmp-test\ui-test3.mjs` 全绿（登录/提交/同意/驳回/预览/代理在线）；
 5. **真实出纸**：管理页同意一单 → 代理 `--once`（演练必须关闭）→ 任务转「已打印」+ 打印机队列清空（静默打印链路必须真机验证，不能只看接口返回）；
 6. 重启后端/代理后状态不丢（状态在 MySQL，不在内存）；
-7. **Office（Word/PPT）**：`backend\.venv\Scripts\python.exe .tmp-test\office_convert_test.py`（34 项）+ `node .tmp-test\ui-test17.mjs`（13 项）全绿；**动过转换链路或换/重装服务器后**，另跑线上冒烟 `PROD_ADMIN_PW=... backend\.venv\Scripts\python.exe .tmp-test\prod_office_check.py`（提交 docx → 预览是 PDF → 删除任务，**不审批所以不会出纸**）。
+7. **代理断开/重连**：`backend\.venv\Scripts\python.exe .tmp-test/agent_link_test.py` + `node .tmp-test/ui-test18.mjs` 全绿；**跑完必须确认 `settings.agent_enabled` 已回到 `1`**（用例收尾会断言，别把本机留在「已断开」——那样后续 e2e 的代理会全 403）；
+8. **Office（Word/PPT）**：`backend\.venv\Scripts\python.exe .tmp-test\office_convert_test.py`（34 项）+ `node .tmp-test\ui-test17.mjs`（13 项）全绿；**动过转换链路或换/重装服务器后**，另跑线上冒烟 `PROD_ADMIN_PW=... backend\.venv\Scripts\python.exe .tmp-test\prod_office_check.py`（提交 docx → 预览是 PDF → 删除任务，**不审批所以不会出纸**）。

@@ -349,6 +349,11 @@ export const api = {
     return data.agent_token
   },
 
+  /** 管理端断开 / 重新连接打印代理（断开期间代理的注册、心跳、领取、回报一律 403） */
+  async setAgentLink(connected: boolean): Promise<SettingsResponse> {
+    return request<SettingsResponse>('/api/settings/agent-link', { method: 'POST', body: { connected } })
+  },
+
   /** 提交打印任务（multipart：address 必填、note 可选、files 可多个） */
   async submitJob(formData: FormData): Promise<Job> {
     const data = await request<{ job: Job }>('/api/jobs', { method: 'POST', body: formData })

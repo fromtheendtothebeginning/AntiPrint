@@ -196,6 +196,15 @@ check("回报失败 → 状态=打印失败", st == 200 and r.get("status") == "
 st, r = call("POST", f"/api/jobs/{job2}/retry", token=admin_token)
 check("管理员重新入队 → 已通过", st == 200 and r["job"]["status"] == "已通过", f"{st} {r}")
 
+# 收尾清理：删掉本次用例建的任务（含最后一条「已通过」的）。
+# 不清理的话，紧接着跑 e2e2.py 时它的代理会先领走这里残留的「已通过」任务，导致它自己那单永远不动。
+print("\n9. 清理本次任务")
+st, r = call("GET", "/api/jobs", token=admin_token)
+left = [j for j in (r.get("jobs") or []) if j.get("username") == uname]
+for item in left:
+    call("DELETE", f"/api/jobs/{item['id']}", token=admin_token)
+check("本次用例的任务已清理（避免干扰后续用例）", True, f"删除 {len(left)} 条")
+
 print("\n===== 结果 =====")
 print(f"通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
 if FAIL:

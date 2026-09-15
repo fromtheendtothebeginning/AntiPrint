@@ -325,6 +325,26 @@ class PrintAgent:
         self.session = requests.Session()
         self.session.headers.update({"X-Agent-Token": cfg["agent_token"]})
         self._last_remote_repr = None
+        # 是否已被管理员在管理页断开：只用于日志降噪（断开期间继续轮询，重连后自动恢复）
+        self.blocked = False
+
+    def _note_blocked(self, exc: Exception) -> bool:
+        """服务端返回 403（管理员断开了代理连接）时记一条日志并返回 True；重复出现不再刷屏"""
+        response = getattr(exc, "response", None)
+        if response is None or response.status_code != 403:
+            return False
+        if not self.blocked:
+            self.blocked = True
+            LOG.warning(
+                "已被管理员断开连接：%s（本机代理会继续轮询，管理员在「管理设置」重新连接后自动恢复）",
+                truncate(response.text),
+            )
+        return True
+
+    def _note_resumed(self) -> None:
+        if self.blocked:
+            self.blocked = False
+            LOG.info("打印代理已恢复连接，继续领取任务")
 
     # ---------- HTTP ----------
 
@@ -407,8 +427,10 @@ class PrintAgent:
         try:
             data = self._post_json("/api/agent/heartbeat", self._device_payload())
         except Exception as exc:
-            LOG.warning("心跳失败：%s（下个周期重试）", exc)
+            if not self._note_blocked(exc):
+                LOG.warning("心跳失败：%s（下个周期重试）", exc)
             return False
+        self._note_resumed()
         remote = data.get("config") or {}
         if isinstance(remote, dict):
             self.remote_config = remote
@@ -425,7 +447,14 @@ class PrintAgent:
         return True
 
     def claim(self):
-        data = self._post_json("/api/agent/claim", {})
+        try:
+            data = self._post_json("/api/agent/claim", {})
+        except requests.HTTPError as exc:
+            # 被管理员断开时只记一次（否则每 5 秒一条异常堆栈刷屏）；其它错误照常提示
+            if not self._note_blocked(exc):
+                raise
+            return None
+        self._note_resumed()
         job = data.get("job")
         return job if isinstance(job, dict) and job.get("id") is not None else None
 
