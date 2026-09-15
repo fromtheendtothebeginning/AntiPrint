@@ -26,9 +26,9 @@ AntiPrint 打印代理 · 安装说明
                       「代理令牌」处复制
         printer     : 打印机队列名（写法要和 Windows 里显示的完全一致）；
                       直接回车＝保持原值，填 default＝用系统默认打印机
-     这一步会写入 config.json，并注册一个登录时自动启动的计划任务 AntiPrintAgent。
-     如果提示 schtasks failed：右键「以管理员身份运行」再试一次；没有权限也没关系，
-     把 start-agent.bat 的快捷方式丢进「启动」文件夹（Win+R 输入 shell:startup）即可。
+     这一步会写入 config.json，并注册开机自启（登录后自动启动代理）：优先用计划任务
+     AntiPrintAgent；没有管理员权限时脚本会**自动退回「启动」文件夹**，两种方式都会在
+     屏幕上报出实际用了哪个，不需要你手动做别的。
 
   3. 双击 check-agent.bat 自检。看到下面三行就说明通了：
         自检 2/4 打印机枚举：OK（…）
@@ -99,6 +99,8 @@ AntiPrint 打印代理 · 安装说明
 
 卸载
   1. stop-agent.bat
-  2. 计划任务没了：schtasks /Delete /TN AntiPrintAgent /F
+  2. 取消开机自启：删除计划任务 schtasks /Delete /TN AntiPrintAgent /F；
+     若安装时用的是启动文件夹，删掉
+     %APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\AntiPrintAgent.cmd
   3. 删除本文件夹即可（config.json 里的令牌随之作废；如需彻底失效，
      到后台「管理设置 → 重置令牌」，但注意会影响其它代理）

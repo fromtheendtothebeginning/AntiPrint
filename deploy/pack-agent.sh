@@ -33,8 +33,14 @@ if [ ! -x "$VENV_PY" ]; then
   exit 1
 fi
 PY_VERSION="$("$VENV_PY" -c 'import sys;print("%d.%d.%d"%sys.version_info[:3])')"
-EMBED_ZIP="$CACHE/python-$PY_VERSION-embed-amd64.zip"
-EMBED_URL="https://www.python.org/ftp/python/$PY_VERSION/python-$PY_VERSION-embed-amd64.zip"
+EMBED_NAME="python-$PY_VERSION-embed-amd64.zip"
+EMBED_ZIP="$CACHE/$EMBED_NAME"
+# python.org 在国内实测只有几十 KB/s（会一直卡住），所以先试镜像，最后才回官方源
+EMBED_URLS=(
+  "https://registry.npmmirror.com/-/binary/python/$PY_VERSION/$EMBED_NAME"
+  "https://mirrors.huaweicloud.com/python/$PY_VERSION/$EMBED_NAME"
+  "https://www.python.org/ftp/python/$PY_VERSION/$EMBED_NAME"
+)
 ZIP_PATH="$DIST/AntiPrintAgent-$VERSION.zip"
 
 echo "[1/6] 准备目录（代理版本 $VERSION，内置 Python $PY_VERSION）"
@@ -43,10 +49,17 @@ mkdir -p "$STAGE" "$CACHE"
 
 echo "[2/6] 内置 Python 运行环境"
 if [ ! -f "$EMBED_ZIP" ]; then
-  echo "      下载 $EMBED_URL"
-  if ! curl -fsSL -o "$EMBED_ZIP" "$EMBED_URL"; then
+  DOWNLOADED=""
+  for url in "${EMBED_URLS[@]}"; do
+    echo "      下载 $url"
+    if curl -fsSL --max-time 300 -o "$EMBED_ZIP" "$url"; then
+      DOWNLOADED="1"
+      break
+    fi
     rm -f "$EMBED_ZIP"
-    echo "      下载失败：请手动下载该 zip 放到 $EMBED_ZIP 后重跑（离线环境同样处理）"
+  done
+  if [ -z "$DOWNLOADED" ]; then
+    echo "      下载失败：请手动下载 $EMBED_NAME 放到 $EMBED_ZIP 后重跑（离线环境同样处理）"
     exit 1
   fi
 fi

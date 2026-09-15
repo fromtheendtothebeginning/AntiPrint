@@ -2,7 +2,8 @@
 setlocal
 rem AntiPrint print agent - start it in the background via pythonw.exe (no console window).
 rem Python resolution: bundled runtime\pythonw.exe -> ..\backend\.venv -> PATH.
-rem Agent's own log: log\agent.log ; redirected stdout/stderr: log\agent.out.log
+rem Agent's own log: log\agent.log (pythonw has no stdout/stderr, so nothing is redirected --
+rem redirecting to a fixed file would break this script while another agent holds it open).
 
 set "AGENT_DIR=%~dp0"
 for %%I in ("%AGENT_DIR%.") do set "AGENT_DIR=%%~fI"
@@ -18,7 +19,7 @@ if not exist "%PYW%" (
 
 if not exist "%AGENT_DIR%\log" mkdir "%AGENT_DIR%\log"
 
-start "" "%PYW%" "%AGENT_DIR%\print_agent.py" >> "%AGENT_DIR%\log\agent.out.log" 2>&1
+start "" "%PYW%" "%AGENT_DIR%\print_agent.py"
 echo [INFO] Agent started in the background.
-echo [INFO] Log: %AGENT_DIR%\log\agent.log
+echo [INFO] Log: %AGENT_DIR%\log\agent.log  ^(already running? the log says so - one agent per PC^)
 endlocal

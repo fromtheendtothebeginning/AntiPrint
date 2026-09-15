@@ -8,6 +8,8 @@ rem Works both from a distributed package (bundled runtime\) and from the repo (
 
 set "AGENT_DIR=%~dp0"
 for %%I in ("%AGENT_DIR%.") do set "AGENT_DIR=%%~fI"
+rem 非管理员会话下 schtasks 一定失败，退回这里（必须在这行之后、块内才取得到值）
+set "STARTUP=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup"
 
 rem ---- python: bundled runtime > project venv > PATH ----
 set "PY=%AGENT_DIR%\runtime\python.exe"
@@ -75,11 +77,17 @@ if errorlevel 1 (
   schtasks /Create /TN AntiPrintAgent /TR "\"%PYW%\" \"%AGENT_DIR%\print_agent.py\"" /SC ONLOGON /F
 )
 if errorlevel 1 (
-  echo [ERROR] schtasks failed - re-run install-agent.bat as Administrator, or put a shortcut
-  echo         to the line below into the Startup folder ^(shell:startup^):
-  echo         "%PYW%" "%AGENT_DIR%\print_agent.py"
-  pause
-  exit /b 1
+  rem 非管理员会话下 schtasks 会直接 Access is denied（实测），退回「启动」文件夹同样能开机自启
+  echo [WARN] schtasks failed ^(needs Administrator^) - using the Startup folder instead ...
+  > "%STARTUP%\AntiPrintAgent.cmd" echo start "" "%PYW%" "%AGENT_DIR%\print_agent.py"
+  if not exist "%STARTUP%\AntiPrintAgent.cmd" (
+    echo [ERROR] Could not write %STARTUP%\AntiPrintAgent.cmd either.
+    echo         Add the line below to the Startup folder manually ^(Win+R, shell:startup^):
+    echo         "%PYW%" "%AGENT_DIR%\print_agent.py"
+    pause
+    exit /b 1
+  )
+  echo [INFO] Autostart registered in the Startup folder: %STARTUP%\AntiPrintAgent.cmd
 )
 
 echo.
