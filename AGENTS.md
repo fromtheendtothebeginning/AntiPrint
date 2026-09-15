@@ -43,6 +43,7 @@
 | 队列/配置 UI | `node .tmp-test\ui-test8.mjs` | 14 项全通过：配置页保存默认地址与默认取件、提交页按默认值预填、队列页勾选「待配送」→「已完成」（勾选后状态与时间正确）、用户侧看到新状态；页面 JS 错误 0 |
 | 绑定/解绑 UI | `node .tmp-test\ui-test9.mjs`（真实本机 anticraft 授权，自包含可重复） | 7 项全通过：A 账号绑定成功并显示 anticraft 用户 ID → B 账号绑同一 anticraft 账号被拒（提示占用者）→ A 解绑（设置本地密码）后可用新密码登录；页面 JS 错误 0 |
 | 打印设置（份数/纸张/页面范围/每张页数/缩放） | `backend\.venv\Scripts\python.exe .tmp-test\print_options_test.py` | 16 项全通过：完整设置落库与回读、默认值、8 类非法值 400、代理 claim 能拿到设置、用户/管理列表都带 print_options；另用代理 `--dry-run` 验证命令行出现 `-print-settings 3x,paper=A3,1-2,2,2,fit` |
+| 文件预览（提交前 / 我的任务 / 管理员队列） | `node .tmp-test/ui-test10.mjs` | 5 项全通过：提交页点文件名弹出本地预览（未上传也能看）、「我的任务」点文件名渲染 iframe、管理员队列预览不受影响；页面 JS 错误 0 |
 
 **测试中修掉的真 bug（勿回退）**：
 1. **代理把 `dry_run` 判断成恒真** —— 服务端下发的是字符串 `"0"`，`bool("0")` 在 Python 里是 `True`，导致代理永远只干跑却回报成功（任务被误标已打印）。已改为 `truthy()` 解析（`print_agent.py`），**任何服务端开关值都要走它**。
@@ -167,7 +168,7 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
 - **状态徽章取色**（6 个状态，勿改）：待审核 `bg-amber/15 text-amber-700 dark:text-amber`；已通过 `bg-brand/10 text-brand-dark dark:text-brand`；打印中 `bg-slate-teal/15 text-slate-teal`；已打印 `bg-emerald-500/10 text-emerald-600 dark:text-emerald-400`；已驳回 `bg-clay/10 text-clay`；打印失败 `bg-red-500/10 text-red-600 dark:text-red-400`。
 - **图标**：一律 `lucide-react`（`h-4 w-4` 行内 / `h-5 w-5` 标题与品牌 / `h-[18px] w-[18px]` 侧栏导航）；`components/Icons.tsx` 已废弃删除，不要再 import。
 - **外壳**：`App.tsx` 是参考实现——已登录 = 240px 可折叠侧栏（`w-60`↔`w-0`，主区 `ml-60`↔`ml-0` 过渡）+ 吸顶栏（`sticky top-0 bg-warm/80 backdrop-blur-md`，标题取自 `PAGE_META`）+ 右下角 toast；未登录 = 只有品牌条（登录页/回调页）。新页面照此风格写，不要再造导航。
-- 复用组件（勿重造）：`Modal`（确认弹窗统一用它，不用 `window.confirm`）、`DropZone`、`FileChips`、`TextField`（所有文本输入）、`ThemeToggle`。
+- 复用组件（勿重造）：`Modal`（确认弹窗统一用它，不用 `window.confirm`）、`DropZone`、`FileChips`、`TextField`（所有文本输入）、`ThemeToggle`、**`FilePreview`**（文件预览弹窗：PDF→iframe、图片→img、其它→提示下载；两种用法——给 `jobId`+`fileId` 由组件带 Bearer 取 blob，或给 `localUrl` 预览提交前的本地文件）。预览入口共三处：提交前（点已选文件名，本地 objectURL）、我的任务（本人上传件）、任务队列（管理员）。
 - react-router-dom v7，路由集中在 `App.tsx`，页面在 `src/pages/`。
 - 管理端预览 PDF 用**同源** blob→iframe（`/api/jobs/{id}/files/{fid}`，需 Bearer 头，所以走 `fetch` + `URL.createObjectURL`，关闭时 `revokeObjectURL`）；跨域源无法内嵌预览。
 - UI 文案、注释、文档、提交信息**一律简体中文**；提交信息结构化（单行标题概括整批 + 正文按模块分节）。
