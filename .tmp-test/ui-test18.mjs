@@ -49,6 +49,9 @@ try {
   await page.waitForTimeout(2400)
   await page.goto(ORIGIN + '/admin', { waitUntil: 'networkidle' })
   await page.waitForTimeout(1800)
+  // 管理页已拆成二级菜单：代理区在「打印代理」分栏里
+  await page.getByRole('button', { name: '打印代理' }).click()
+  await page.waitForTimeout(700)
 
   console.log('\n1. 代理区默认状态与按钮')
   const card = page.locator('section', { hasText: '打印代理' }).first()

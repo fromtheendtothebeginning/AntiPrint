@@ -29,7 +29,10 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from decimal import Decimal
+
 import auth
+import billing
 import config
 import constants
 import convert
@@ -331,6 +334,8 @@ class SettingsBody(BaseModel):
     anticraft_client_secret: str | None = None
     anticraft_origins: str | None = None
     anticraft_admin_users: str | None = None
+    print_price: str | None = None
+    free_users: str | None = None
 
 
 class TicketBody(BaseModel):
@@ -413,6 +418,11 @@ def _profile_payload(user: dict) -> dict:
         "anticraft_id": row.get("anticraft_id"),
         "default_address": row.get("default_address") or "",
         "default_delivery": row.get("default_delivery") or constants.DELIVER,
+        # 计费相关：余额、是否免费（管理员/anticraft/白名单）、为什么免费、当前单价
+        "balance": row.get("balance") or 0,
+        "billable": not billing.is_free(row),
+        "free_reason": billing.free_reason(row),
+        "price": billing.price_text(),
     }
 
 
@@ -480,6 +490,21 @@ class RoleBody(BaseModel):
     role: str = ""
 
 
+@app.get("/api/balance")
+def get_balance(user: dict = Depends(auth.get_current_user)):
+    """我的余额页：余额、是否计费、为什么免费、单价与最近流水"""
+    row = db.get_user_by_id(user["id"]) or {}
+    return {
+        "balance": row.get("balance") or 0,
+        "billable": not billing.is_free(row),
+        "free_reason": billing.free_reason(row),
+        "price": billing.price_text(),
+        "logs": db.list_balance_logs(user["id"], 50),
+        # 付款码暂未实现：前端据此显示「充值暂未开放」占位
+        "recharge_enabled": False,
+    }
+
+
 @app.get("/api/users")
 def list_users(user: dict = Depends(auth.require_admin)):
     """用户列表（管理员可看，含角色/来源/anticraft 绑定/任务数）"""
@@ -491,12 +516,43 @@ def list_users(user: dict = Depends(auth.require_admin)):
                 "role": row["role"],
                 "source": row.get("source") or "local",
                 "anticraft_id": row.get("anticraft_id"),
+                "balance": row.get("balance") or 0,
                 "created_at": row.get("created_at"),
                 "job_count": row.get("job_count") or 0,
             }
             for row in db.list_users()
         ]
     }
+
+
+class BalanceBody(BaseModel):
+    """管理员调账：delta 为正=加钱，为负=扣钱（元，最多两位小数）"""
+    delta: str | float | int
+    note: str | None = None
+
+
+@app.post("/api/users/{user_id}/balance")
+def adjust_user_balance(user_id: int, body: BalanceBody, user: dict = Depends(auth.require_admin)):
+    """管理员/root 给某个账号加/减余额（充值暂未实现，先由管理员手工记账）"""
+    target = db.get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    try:
+        delta = billing.parse_price(abs(Decimal(str(body.delta)).copy_abs()))
+    except (ValueError, ArithmeticError):
+        raise HTTPException(status_code=400, detail="金额需为 0 ~ 100 之间的数字（最多两位小数）")
+    if delta == 0:
+        raise HTTPException(status_code=400, detail="金额不能为 0")
+    if Decimal(str(body.delta)) < 0:
+        delta = -delta
+    if delta > Decimal("10000") or delta < Decimal("-10000"):
+        raise HTTPException(status_code=400, detail="单次调账不能超过 10000 元")
+    note = (body.note or "").strip()[:40] or "管理员调账"
+    ok, balance = db.add_balance(user_id, delta, note, actor=user["username"])
+    if not ok:
+        raise HTTPException(status_code=400, detail=f"扣减后余额不能为负（当前 {balance} 元）")
+    logger.info("root %s 给用户 %s 调账 %s 元（%s），余额 %s", user["username"], target["username"], delta, note, balance)
+    return {"ok": True, "balance": str(balance)}
 
 
 @app.post("/api/users/{user_id}/role")
@@ -963,10 +1019,55 @@ def create_job(
         if not saved:
             raise HTTPException(status_code=400, detail="没有有效文件可提交")
 
-        job = db.create_job(
-            user["id"], address, note, saved, mode, copies_value,
-            json.dumps(options, ensure_ascii=False),
-        )
+        # 计费：管理员/root、anticraft 账号、白名单免费；其余按「张数 × 单价」扣余额。
+        # 张数按「实际打印页数 ÷ 每张页数 × 份数」算（Office 用转换后的 PDF 页数）。
+        billable_files = [
+            {
+                "path": str(
+                    convert.converted_path(item["sha256"])
+                    if Path(item["stored_name"]).suffix.lower() in constants.OFFICE_EXT
+                    else tmp_dir / item["stored_name"]
+                ),
+                "is_pdf": Path(item["stored_name"]).suffix.lower() == ".pdf"
+                or Path(item["stored_name"]).suffix.lower() in constants.OFFICE_EXT,
+                "copies": (
+                    (file_settings[index] or {}).get("copies")
+                    if index < len(file_settings) and file_settings[index]
+                    else None
+                )
+                or copies_value
+                or 1,
+                "options": (
+                    file_settings[index]
+                    if index < len(file_settings) and file_settings[index]
+                    else options
+                ),
+            }
+            for index, item in enumerate(saved)
+        ]
+        sheets, amount = billing.estimate(billable_files)
+        # 注意：依赖注入给的是 JWT 里的用户（只有 id/username/role），
+        # 免费判定还要看 source（anticraft），所以必须按 id 重新取一次库里的行
+        billing_user = db.get_user_by_id(user["id"]) or user
+        charge = Decimal("0.00") if billing.is_free(billing_user) else amount
+        try:
+            job = db.create_job(
+                user["id"], address, note, saved, mode, copies_value,
+                json.dumps(options, ensure_ascii=False),
+                charge=charge,
+            )
+        except db.InsufficientBalance as exc:
+            # 余额不足：不建单、不扣钱，交给前端弹「付款码（暂未实现）」
+            raise HTTPException(
+                status_code=402,
+                detail={
+                    "code": "insufficient_balance",
+                    "message": f"余额不足：本单需 {exc.needed} 元（{sheets} 张 × {billing.price_text()}），当前余额 {exc.balance} 元",
+                    "cost": str(exc.needed),
+                    "balance": str(exc.balance),
+                    "sheets": sheets,
+                },
+            )
         dest_dir = config.UPLOAD_DIR / str(job["id"])
         # 任务号来自自增主键，正常不会重名；但历史上出现过（把本机 uploads 传上服务器）
         # 残留同名目录，导致 rename 报 Errno 39 Directory not empty。残留目录不属于任何任务，清掉再落盘。
@@ -983,7 +1084,12 @@ def create_job(
             "用户 %s 提交任务 #%s（%s 个文件，%s，份数 %s，任务级设置 %s，逐文件设置 %s 条，地址：%s）",
             user["username"], job["id"], len(saved), mode, copies_value, options, len(file_settings), address or "（取件）",
         )
-        return {"job": _job_payload(db.get_job(job["id"]))}
+        logger.info("任务 #%s 计费：%s 张，扣 %s 元（余额 %s）", job["id"], sheets, charge, db.get_balance(user["id"]))
+        return {
+            "job": _job_payload(db.get_job(job["id"])),
+            "charge": str(charge),
+            "balance": str(db.get_balance(user["id"])),
+        }
     except HTTPException:
         shutil.rmtree(tmp_dir, ignore_errors=True)
         raise
@@ -1082,7 +1188,10 @@ def reject(job_id: int, body: RejectBody, user: dict = Depends(auth.require_admi
     )
     if not ok:
         raise HTTPException(status_code=409, detail="任务状态已变化，请刷新后重试")
-    return {"job": _job_payload(db.get_job(job_id))}
+    refunded = db.refund_job(job_id, "驳回退费", user["username"])
+    if refunded:
+        logger.info("任务 #%s 驳回，退回 %s 元", job_id, refunded)
+    return {"job": _job_payload(db.get_job(job_id)), "refunded": str(refunded)}
 
 
 @app.post("/api/jobs/{job_id}/resubmit")
@@ -1133,8 +1242,15 @@ def withdraw(job_id: int, user: dict = Depends(auth.get_current_user)):
     )
     if not ok:
         raise HTTPException(status_code=409, detail="任务状态已变化（可能已被打印代理领取），请刷新后重试")
+    refunded = db.refund_job(job_id, "撤回退费", user["username"])
+    if refunded:
+        logger.info("任务 #%s 撤回，退回 %s 元", job_id, refunded)
     logger.info("用户 %s 撤回任务 #%s", user["username"], job_id)
-    return {"job": _job_payload(db.get_job(job_id))}
+    return {
+        "job": _job_payload(db.get_job(job_id)),
+        "refunded": str(refunded),
+        "balance": str(db.get_balance(user["id"])),
+    }
 
 
 @app.post("/api/jobs/{job_id}/reprint")
@@ -1190,14 +1306,20 @@ def advance(job_id: int, body: AdvanceBody, user: dict = Depends(auth.require_ad
 def delete_job(job_id: int, user: dict = Depends(auth.require_admin)):
     """删除任务及其上传文件目录（管理员）；Office 转换缓存没别的任务引用时一起清掉"""
     job = _load_job_for(job_id, user)
+    # 没出过纸就退钱（已驳回/已撤回的 charge 早已清零，refund_job 是无操作）
+    refunded = Decimal("0")
+    if job["status"] in (
+        constants.S_PENDING, constants.S_APPROVED, constants.S_REJECTED, constants.S_WITHDRAWN,
+    ):
+        refunded = db.refund_job(job_id, "删除退费", user["username"])
     db.delete_job(job_id)
     shutil.rmtree(config.UPLOAD_DIR / str(job_id), ignore_errors=True)
     for item in job.get("files", []):
         digest = item.get("sha256")
         if digest and not db.sha256_in_use(digest):
             convert.drop_cached(digest)
-    logger.info("管理员 %s 删除任务 #%s", user["username"], job_id)
-    return {"ok": True}
+    logger.info("管理员 %s 删除任务 #%s（退费 %s 元）", user["username"], job_id, refunded)
+    return {"ok": True, "refunded": str(refunded)}
 
 
 # ── 设置（admin）──
@@ -1224,6 +1346,16 @@ def update_settings(body: SettingsBody, user: dict = Depends(auth.require_admin)
         updates["copies"] = str(int(raw))
     if body.dry_run is not None:
         updates["dry_run"] = "1" if str(body.dry_run).strip().lower() in ("1", "true", "yes", "on") else "0"
+    if body.print_price is not None:
+        try:
+            updates["print_price"] = str(billing.parse_price(body.print_price))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    if body.free_users is not None:
+        raw = str(body.free_users).replace("，", ",").replace("；", ",").replace(";", ",").replace(" ", "").strip(",")
+        if len(raw) > 500:
+            raise HTTPException(status_code=400, detail="白名单过长（最多 500 字）")
+        updates["free_users"] = raw
     if body.anticraft_base is not None:
         value = str(body.anticraft_base).strip().rstrip("/")
         if value and not value.startswith(("http://", "https://")):

@@ -4,15 +4,21 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   AlertTriangle,
+  BadgeCheck,
   Check,
+  Coins,
   Copy,
+  Link2,
   ListChecks,
   Loader2,
+  Plus,
+  Trash2,
   Plug,
   Printer,
   RefreshCw,
   RotateCcw,
   Settings,
+  ShieldCheck,
   Unplug,
   Wifi,
   WifiOff,
@@ -21,8 +27,8 @@ import { api, getErrorMessage } from '../api'
 import type { SettingsPayload } from '../api'
 import Modal from '../components/Modal'
 import TextField from '../components/TextField'
-import { formatTime } from '../constants'
-import type { Agent, Settings as SettingsData } from '../types/api'
+import { ROLE_LABEL, formatTime } from '../constants'
+import type { AdminUserRow, Agent, Settings as SettingsData } from '../types/api'
 
 const REFRESH_INTERVAL = 15000
 /** 目标打印机下拉里的「手动输入」选项值 */
@@ -51,6 +57,24 @@ const ALERT_ERROR =
   'flex items-start gap-2 rounded-xl bg-red-500/10 px-4 py-3 text-sm text-red-600 dark:text-red-400'
 const ALERT_OK = 'flex items-start gap-2 rounded-xl bg-brand/10 px-4 py-3 text-sm text-brand-dark dark:text-brand'
 const ALERT_WARN = 'flex items-start gap-2 rounded-xl bg-clay/10 px-4 py-3 text-sm text-clay'
+const TH = 'px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-400'
+const TD = 'px-4 py-3 text-sm text-gray-600 dark:text-gray-300'
+
+/** 二级菜单：管理页按功能分栏，避免一屏堆到底 */
+const TABS = [
+  { key: 'printer', label: '打印设置', Icon: Printer },
+  { key: 'billing', label: '打印计费', Icon: Coins },
+  { key: 'whitelist', label: '免费白名单', Icon: BadgeCheck },
+  { key: 'admins', label: '管理员名单', Icon: ShieldCheck },
+  { key: 'anticraft', label: 'anticraft 绑定', Icon: Link2 },
+  { key: 'agent', label: '打印代理', Icon: Wifi },
+] as const
+type AdminTab = (typeof TABS)[number]['key']
+
+/** 逗号分隔的名字 → 数组（去空、去重） */
+function parseNames(value: string): string[] {
+  return Array.from(new Set(value.split(/[,，;；\s]+/).map((name) => name.trim()).filter(Boolean)))
+}
 
 /** 设置里的布尔值以字符串存储，兼容常见写法 */
 function isEnabled(value: string | null | undefined): boolean {
@@ -84,6 +108,16 @@ function AdminPage() {
   const [anticraftClientSecret, setAnticraftClientSecret] = useState('')
   const [anticraftOrigins, setAnticraftOrigins] = useState('')
   const [anticraftAdminUsers, setAnticraftAdminUsers] = useState('')
+  /** 每张打印单价（元）与免费白名单（用户名，逗号分隔） */
+  const [printPrice, setPrintPrice] = useState('0.1')
+  /** 当前二级菜单 */
+  const [tab, setTab] = useState<AdminTab>('printer')
+  /** 用户表：名单里的名字对不对得上账号，一眼能看出来 */
+  const [userRows, setUserRows] = useState<AdminUserRow[]>([])
+  const [newFreeUser, setNewFreeUser] = useState('')
+  const [newAdminUser, setNewAdminUser] = useState('')
+  const [listBusy, setListBusy] = useState(false)
+  const [freeUsers, setFreeUsers] = useState('')
   const [saving, setSaving] = useState(false)
   const [copied, setCopied] = useState(false)
   const [rotateOpen, setRotateOpen] = useState(false)
@@ -116,6 +150,8 @@ function AdminPage() {
       setDryRun(isEnabled(saved.dry_run))
       setAnticraftBase(saved.anticraft_base ?? '')
       setAnticraftAdminUsers(saved.anticraft_admin_users ?? '')
+      setPrintPrice(saved.print_price || '0.1')
+      setFreeUsers(saved.free_users ?? '')
       setAnticraftClientId(saved.anticraft_client_id ?? '')
       // 后端只回掩码，未配置时是空串；直接把返回值作为输入框初始内容
       setAnticraftClientSecret(saved.anticraft_client_secret ?? '')
@@ -133,6 +169,11 @@ function AdminPage() {
   // 首次加载设置（含代理状态）+ 每 15 秒只刷新代理状态（卸载时清理定时器）
   useEffect(() => {
     void loadSettings()
+    // 名单表格要把用户名和真实账号对应起来（写错的名字不会生效）
+    void api
+      .listUsers()
+      .then((list) => setUserRows(list))
+      .catch(() => undefined)
     const timer = setInterval(() => {
       void loadAgentStatus()
     }, REFRESH_INTERVAL)
@@ -184,6 +225,51 @@ function AdminPage() {
     setRefreshing(false)
   }
 
+  /** 名单类设置（免费白名单 / anticraft 管理员名单）：直接提交新的一份逗号分隔值 */
+  async function saveNames(field: 'free_users' | 'anticraft_admin_users', names: string[]) {
+    setListBusy(true)
+    setSettingsError('')
+    try {
+      const value = names.join(',')
+      const saved = await api.saveSettings(
+        field === 'free_users' ? { free_users: value } : { anticraft_admin_users: value },
+      )
+      setFreeUsers(saved.free_users ?? '')
+      setAnticraftAdminUsers(saved.anticraft_admin_users ?? '')
+      setSettings(saved)
+      setNotice('名单已保存')
+    } catch (err) {
+      setSettingsError(getErrorMessage(err))
+    } finally {
+      setListBusy(false)
+    }
+  }
+
+  /** 名单里追加一个名字（重复/为空直接忽略） */
+  async function addName(field: 'free_users' | 'anticraft_admin_users', raw: string) {
+    const name = raw.trim()
+    if (!name) return
+    const current = parseNames(field === 'free_users' ? freeUsers : anticraftAdminUsers)
+    if (current.includes(name)) {
+      setSettingsError(`${name} 已在名单里`)
+      return
+    }
+    await saveNames(field, [...current, name])
+    if (field === 'free_users') setNewFreeUser('')
+    else setNewAdminUser('')
+  }
+
+  /** 名单里移除一个名字 */
+  async function removeName(field: 'free_users' | 'anticraft_admin_users', name: string) {
+    const current = parseNames(field === 'free_users' ? freeUsers : anticraftAdminUsers)
+    await saveNames(field, current.filter((item) => item !== name))
+  }
+
+  /** 名单数组与「用户名 → 账号」索引：表格用，写错的名字一眼看出来 */
+  const freeNames = parseNames(freeUsers)
+  const adminNames = parseNames(anticraftAdminUsers)
+  const usersByName = new Map(userRows.map((row) => [row.username, row]))
+
   async function handleSaveSettings() {
     const copiesValue = copies.trim()
     const parsed = Number(copiesValue)
@@ -211,6 +297,10 @@ function AdminPage() {
     if (originsValue !== (settings?.anticraft_origins ?? '')) payload.anticraft_origins = originsValue
     const adminUsersValue = anticraftAdminUsers.trim()
     if (adminUsersValue !== (settings?.anticraft_admin_users ?? '')) payload.anticraft_admin_users = adminUsersValue
+    const priceValue = printPrice.trim() || '0.1'
+    if (priceValue !== (settings?.print_price ?? '')) payload.print_price = priceValue
+    const freeUsersValue = freeUsers.trim()
+    if (freeUsersValue !== (settings?.free_users ?? '')) payload.free_users = freeUsersValue
 
     setSaving(true)
     setSettingsError('')
@@ -273,7 +363,29 @@ function AdminPage() {
         </p>
       )}
 
+      {/* 二级菜单：各功能分栏，避免一屏堆到底 */}
+      <nav className="flex flex-wrap gap-2" aria-label="管理设置子菜单">
+        {TABS.map(({ key, label, Icon }) => (
+          <button
+            key={key}
+            type="button"
+            aria-current={tab === key ? 'page' : undefined}
+            className={`inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-medium transition-all duration-200 ${
+              tab === key
+                ? 'bg-brand text-white shadow-lg shadow-brand/25'
+                : 'bg-white text-gray-500 shadow-sm shadow-black/5 hover:-translate-y-0.5 hover:bg-warm dark:bg-ink-soft dark:text-gray-400 dark:hover:bg-white/5'
+            }`}
+            onClick={() => setTab(key)}
+          >
+            <Icon className="h-4 w-4" />
+            {label}
+          </button>
+        ))}
+      </nav>
+
       {/* 打印代理状态：圆点 + 在线/离线/已断开文案；可在此断开或重新连接代理 */}
+{tab === 'agent' && (
+        <>
       <section className={`${CARD} flex flex-wrap items-center gap-4`}>
         <span className="relative flex h-3 w-3 shrink-0" aria-hidden="true">
           {agentOnline && agentEnabled && (
@@ -352,6 +464,9 @@ function AdminPage() {
         )}
       </section>
 
+        </>
+      )}
+      
       {/* 断开连接确认（可逆操作，但会停止出纸，所以二次确认） */}
       <Modal
         open={disconnectOpen}
@@ -385,251 +500,500 @@ function AdminPage() {
         </p>
       </Modal>
 
-      {/* 打印设置 */}
-      <section className={CARD}>
-        <h2 className="flex items-center gap-2 text-base font-semibold text-gray-800 dark:text-gray-100">
-          <Settings className="h-5 w-5 text-brand" />
-          打印设置
-        </h2>
+{tab === 'printer' && (
+        <section className={CARD}>
+          <h2 className="flex items-center gap-2 text-base font-semibold text-gray-800 dark:text-gray-100">
+            <Settings className="h-5 w-5 text-brand" />
+            打印设置
+          </h2>
 
-        {/* 出纸后的交接流转在「任务队列」页完成 */}
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-warm px-4 py-3 dark:bg-white/5">
-          <p className="text-xs text-gray-400">
-            打印成功的任务去「任务队列」页勾选「待配送 / 待取件」与「已完成」
-          </p>
-          <Link className={BTN_PRIMARY} to="/queue">
-            <ListChecks className="h-4 w-4" />
-            任务队列
-          </Link>
-        </div>
-
-        {settingsError && (
-          <p className={`${ALERT_ERROR} mt-4`}>
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-            {settingsError}
-          </p>
-        )}
-
-        <div className="mt-5 grid gap-5 md:grid-cols-2">
-          <div>
-            <label className={LABEL} htmlFor="setting-launcher">
-              启动器
-            </label>
-            <select
-              id="setting-launcher"
-              className={INPUT}
-              value={launcher}
-              onChange={(event) => setLauncher(event.target.value)}
-            >
-              <option value="sumatra">SumatraPDF</option>
-              <option value="default">系统默认关联程序</option>
-            </select>
-          </div>
-
-          <div>
-            <label className={LABEL} htmlFor="setting-copies">
-              份数
-            </label>
-            <input
-              id="setting-copies"
-              className={INPUT}
-              type="number"
-              min={1}
-              value={copies}
-              onChange={(event) => setCopies(event.target.value)}
-            />
-          </div>
-
-          <div className="md:col-span-2">
-            <label
-              className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-gray-500 dark:text-gray-400"
-              htmlFor="setting-printer"
-            >
-              <Printer className="h-3.5 w-3.5" />
-              目标打印机
-            </label>
-            <select
-              id="setting-printer"
-              className={INPUT}
-              value={customPrinter ? CUSTOM_PRINTER : printerName}
-              onChange={(event) => {
-                const value = event.target.value
-                if (value === CUSTOM_PRINTER) {
-                  setCustomPrinter(true)
-                  return
-                }
-                setCustomPrinter(false)
-                setPrinterName(value)
-              }}
-            >
-              <option value="">（跟随代理本机默认打印机）</option>
-              {printerOptions.map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-              <option value={CUSTOM_PRINTER}>手动输入打印机名称…</option>
-            </select>
-            {customPrinter && (
-              <div className="mt-3">
-                <TextField
-                  label="打印机名称"
-                  name="printer-name"
-                  value={printerName}
-                  placeholder="例如：HP LaserJet Professional P1106"
-                  onChange={(event) => setPrinterName(event.target.value)}
-                />
-              </div>
-            )}
-            <p className={HINT}>下拉选项来自代理上报的本机打印队列；名称需与 Windows 中的队列名完全一致</p>
-            {/* 虚拟队列会让 SumatraPDF 的 -silent 卡到 90 秒超时、任务判失败，这里明确警告 */}
-            {/print to pdf|onenote|xps|fax/i.test(printerName) && (
-              <p className="mt-2 flex items-start gap-2 rounded-xl bg-clay/10 px-3 py-2 text-xs text-clay">
-                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                这是虚拟打印机队列，静默打印会卡满 90 秒后判失败；请选择真实打印机（如 HP LaserJet Professional P1106）。
-              </p>
-            )}
-          </div>
-
-          <div className="md:col-span-2">
-            <label className={LABEL} htmlFor="setting-anticraft-base">
-              anticraft 服务地址
-            </label>
-            <input
-              id="setting-anticraft-base"
-              className={INPUT}
-              value={anticraftBase}
-              placeholder="https://anticraft.top"
-              onChange={(event) => setAnticraftBase(event.target.value)}
-            />
-            <p className={HINT}>用于「anticraft 登录」，默认 https://anticraft.top</p>
-          </div>
-
-          <div>
-            <label className={LABEL} htmlFor="setting-anticraft-client-id">
-              anticraft 绑定应用 client_id
-            </label>
-            <input
-              id="setting-anticraft-client-id"
-              className={INPUT}
-              value={anticraftClientId}
-              onChange={(event) => setAnticraftClientId(event.target.value)}
-            />
-            <p className={HINT}>在 anticraft 后台「绑定应用」登记本应用后获得</p>
-          </div>
-
-          <div>
-            <label className={LABEL} htmlFor="setting-anticraft-client-secret">
-              anticraft 绑定应用 client_secret
-            </label>
-            <input
-              id="setting-anticraft-client-secret"
-              className={INPUT}
-              type="password"
-              autoComplete="new-password"
-              value={anticraftClientSecret}
-              onChange={(event) => setAnticraftClientSecret(event.target.value)}
-              // 聚焦时清掉掩码占位，避免用户在原掩码后面接着输入
-              onFocus={() => {
-                if (anticraftClientSecret === MASKED_SECRET) setAnticraftClientSecret('')
-              }}
-            />
-            <p className={HINT}>只在服务端使用；已配置时显示为 ******，留空表示不修改</p>
-          </div>
-
-          <div className="md:col-span-2">
-            <label className={LABEL} htmlFor="setting-anticraft-origins">
-              允许的授权来源
-            </label>
-            <input
-              id="setting-anticraft-origins"
-              className={INPUT}
-              value={anticraftOrigins}
-              placeholder="http://127.0.0.1:8301,http://localhost:3010"
-              onChange={(event) => setAnticraftOrigins(event.target.value)}
-            />
-            <p className={HINT}>
-              逗号分隔，需与 anticraft 登记的「回调地址」前缀一致，如 http://127.0.0.1:8301,http://localhost:3010
+          {/* 出纸后的交接流转在「任务队列」页完成 */}
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-warm px-4 py-3 dark:bg-white/5">
+            <p className="text-xs text-gray-400">
+              打印成功的任务去「任务队列」页勾选「待配送 / 待取件」与「已完成」
             </p>
+            <Link className={BTN_PRIMARY} to="/queue">
+              <ListChecks className="h-4 w-4" />
+              任务队列
+            </Link>
           </div>
 
-          <div className="md:col-span-2">
-            <label className={LABEL} htmlFor="setting-anticraft-admin-users">
-              anticraft 管理员名单
-            </label>
-            <input
-              id="setting-anticraft-admin-users"
-              className={INPUT}
-              value={anticraftAdminUsers}
-              placeholder="例如：end（多个用逗号分隔）"
-              onChange={(event) => setAnticraftAdminUsers(event.target.value)}
-            />
-            <p className={HINT}>
-              逗号分隔的 anticraft 用户名。这些账号用 anticraft 登录或绑定时，在 AntiPrint 里直接获得管理员权限
-              （anticraft 开放接口不返回角色，因此用这份名单；密码登录方式会优先采用 anticraft 返回的角色）
+          {settingsError && (
+            <p className={`${ALERT_ERROR} mt-4`}>
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              {settingsError}
             </p>
+          )}
+
+          <div className="mt-5 grid gap-5 md:grid-cols-2">
+            <div>
+              <label className={LABEL} htmlFor="setting-launcher">
+                启动器
+              </label>
+              <select
+                id="setting-launcher"
+                className={INPUT}
+                value={launcher}
+                onChange={(event) => setLauncher(event.target.value)}
+              >
+                <option value="sumatra">SumatraPDF</option>
+                <option value="default">系统默认关联程序</option>
+              </select>
+            </div>
+
+            <div>
+              <label className={LABEL} htmlFor="setting-copies">
+                份数
+              </label>
+              <input
+                id="setting-copies"
+                className={INPUT}
+                type="number"
+                min={1}
+                value={copies}
+                onChange={(event) => setCopies(event.target.value)}
+              />
+            </div>
+
+            <div className="md:col-span-2">
+              <label
+                className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-gray-500 dark:text-gray-400"
+                htmlFor="setting-printer"
+              >
+                <Printer className="h-3.5 w-3.5" />
+                目标打印机
+              </label>
+              <select
+                id="setting-printer"
+                className={INPUT}
+                value={customPrinter ? CUSTOM_PRINTER : printerName}
+                onChange={(event) => {
+                  const value = event.target.value
+                  if (value === CUSTOM_PRINTER) {
+                    setCustomPrinter(true)
+                    return
+                  }
+                  setCustomPrinter(false)
+                  setPrinterName(value)
+                }}
+              >
+                <option value="">（跟随代理本机默认打印机）</option>
+                {printerOptions.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+                <option value={CUSTOM_PRINTER}>手动输入打印机名称…</option>
+              </select>
+              {customPrinter && (
+                <div className="mt-3">
+                  <TextField
+                    label="打印机名称"
+                    name="printer-name"
+                    value={printerName}
+                    placeholder="例如：HP LaserJet Professional P1106"
+                    onChange={(event) => setPrinterName(event.target.value)}
+                  />
+                </div>
+              )}
+              <p className={HINT}>下拉选项来自代理上报的本机打印队列；名称需与 Windows 中的队列名完全一致</p>
+              {/* 虚拟队列会让 SumatraPDF 的 -silent 卡到 90 秒超时、任务判失败，这里明确警告 */}
+              {/print to pdf|onenote|xps|fax/i.test(printerName) && (
+                <p className="mt-2 flex items-start gap-2 rounded-xl bg-clay/10 px-3 py-2 text-xs text-clay">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  这是虚拟打印机队列，静默打印会卡满 90 秒后判失败；请选择真实打印机（如 HP LaserJet Professional P1106）。
+                </p>
+              )}
+            </div>
           </div>
-        </div>
 
-        <label className="mt-5 inline-flex cursor-pointer items-center gap-2.5 rounded-xl bg-warm px-4 py-3 text-sm text-gray-700 dark:bg-white/5 dark:text-gray-300">
-          <input
-            type="checkbox"
-            className="h-4 w-4 accent-brand"
-            checked={dryRun}
-            onChange={(event) => setDryRun(event.target.checked)}
-          />
-          <span>演练模式（不真实出纸）</span>
-        </label>
+          <label className="mt-5 inline-flex cursor-pointer items-center gap-2.5 rounded-xl bg-warm px-4 py-3 text-sm text-gray-700 dark:bg-white/5 dark:text-gray-300">
+            <input
+              type="checkbox"
+              className="h-4 w-4 accent-brand"
+              checked={dryRun}
+              onChange={(event) => setDryRun(event.target.checked)}
+            />
+            <span>演练模式（不真实出纸）</span>
+          </label>
 
-        <div className="mt-5 rounded-2xl border border-gray-100 bg-warm p-4 dark:border-white/10 dark:bg-white/5">
-          <p className="text-xs font-medium text-gray-500 dark:text-gray-400">代理令牌</p>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <code
-              className="min-w-0 flex-1 select-all truncate rounded-xl bg-white px-3 py-2 font-mono text-xs text-gray-600 shadow-sm dark:bg-ink dark:text-gray-300"
-              title={settings?.agent_token || '（暂未生成）'}
-            >
-              {settings?.agent_token || '（暂未生成）'}
-            </code>
-            <button
-              type="button"
-              className={BTN_SM_SECONDARY}
-              disabled={!settings?.agent_token}
-              onClick={() => void handleCopyToken()}
-            >
-              <Copy className="h-3.5 w-3.5" />
-              {copied ? '已复制' : '复制'}
-            </button>
-            <button
-              type="button"
-              className={BTN_SM_DANGER}
-              disabled={!settings?.agent_token}
-              onClick={() => setRotateOpen(true)}
-            >
-              <RotateCcw className="h-3.5 w-3.5" />
-              重置令牌
+          <div className="mt-6 flex justify-end">
+            <button type="button" className={BTN_PRIMARY} onClick={() => void handleSaveSettings()} disabled={saving}>
+              {saving ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  保存中…
+                </>
+              ) : (
+                <>
+                  <Check className="h-4 w-4" />
+                  保存设置
+                </>
+              )}
             </button>
           </div>
+        </section>
+      )}
+
+      {tab === 'billing' && (
+        <section className={CARD}>
+          <h2 className="flex items-center gap-2 text-base font-semibold text-gray-800 dark:text-gray-100">
+            <Coins className="h-5 w-5 text-brand" />
+            打印计费
+          </h2>
           <p className={HINT}>
-            打印代理用该令牌（请求头 X-Agent-Token）领取与回报任务，重置后需同步更新代理配置
+            管理员/root、anticraft 账号与白名单（见「免费白名单」）免费；其余账号按「张数 × 单价」从余额扣除
+            （张数 = PDF 页数 ÷ 每张页数 × 份数）。提交时扣、驳回/撤回自动退；充值功能暂未开放，余额由管理员在「用户管理」里手工调整。
           </p>
-        </div>
 
-        <div className="mt-6 flex justify-end">
-          <button type="button" className={BTN_PRIMARY} onClick={() => void handleSaveSettings()} disabled={saving}>
-            {saving ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                保存中…
-              </>
-            ) : (
-              <>
-                <Check className="h-4 w-4" />
-                保存设置
-              </>
-            )}
-          </button>
-        </div>
-      </section>
+          {settingsError && (
+            <p className={`${ALERT_ERROR} mt-4`}>
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              {settingsError}
+            </p>
+          )}
+
+          <div className="mt-5 max-w-sm">
+            <label className={LABEL} htmlFor="settings-price">
+              单价（元/张）
+            </label>
+            <input
+              id="settings-price"
+              className={INPUT}
+              value={printPrice}
+              placeholder="0.1"
+              onChange={(event) => setPrintPrice(event.target.value)}
+            />
+            <p className={HINT}>默认 0.1 元；0 ~ 100 之间，最多两位小数</p>
+          </div>
+
+          <div className="mt-6 flex justify-end">
+            <button type="button" className={BTN_PRIMARY} onClick={() => void handleSaveSettings()} disabled={saving}>
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+              保存设置
+            </button>
+          </div>
+        </section>
+      )}
+
+      {tab === 'whitelist' && (
+        <section className={CARD}>
+          <h2 className="flex items-center gap-2 text-base font-semibold text-gray-800 dark:text-gray-100">
+            <BadgeCheck className="h-5 w-5 text-brand" />
+            免费白名单
+          </h2>
+          <p className={HINT}>
+            名单里的账号提交打印任务不扣余额（管理员/root、anticraft 账号本身就免费）。增删即时生效，不需要点「保存设置」。
+          </p>
+
+          {settingsError && (
+            <p className={`${ALERT_ERROR} mt-4`}>
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              {settingsError}
+            </p>
+          )}
+
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <input
+              className={`${INPUT} max-w-xs`}
+              value={newFreeUser}
+              placeholder="输入要免打印费的用户名"
+              onChange={(event) => setNewFreeUser(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  void addName('free_users', newFreeUser)
+                }
+              }}
+            />
+            <button
+              type="button"
+              className={BTN_PRIMARY}
+              disabled={listBusy || !newFreeUser.trim()}
+              onClick={() => void addName('free_users', newFreeUser)}
+            >
+              {listBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+              添加
+            </button>
+          </div>
+
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full min-w-[440px]">
+              <thead>
+                <tr className="border-b border-gray-100 dark:border-white/10">
+                  <th className={TH}>用户名</th>
+                  <th className={TH}>账号</th>
+                  <th className={TH}>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {freeNames.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="px-4 py-8 text-center text-sm text-gray-400">
+                      白名单为空：所有计费账号提交任务都会扣余额
+                    </td>
+                  </tr>
+                )}
+                {freeNames.map((name) => {
+                  const row = usersByName.get(name)
+                  return (
+                    <tr key={name} className="border-b border-gray-50 last:border-0 dark:border-white/5">
+                      <td className={`${TD} font-medium text-gray-800 dark:text-gray-100`}>{name}</td>
+                      <td className={TD}>
+                        {row ? (
+                          <span className="text-gray-500 dark:text-gray-400">
+                            已注册 · {ROLE_LABEL[row.role] ?? row.role}
+                            {row.source === 'anticraft' ? ' · anticraft' : ''}
+                          </span>
+                        ) : (
+                          <span className="text-clay">本站没有这个账号（不会生效）</span>
+                        )}
+                      </td>
+                      <td className={`${TD} whitespace-nowrap`}>
+                        <button
+                          type="button"
+                          className={BTN_SM_DANGER}
+                          disabled={listBusy}
+                          onClick={() => void removeName('free_users', name)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          移除
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {tab === 'admins' && (
+        <section className={CARD}>
+          <h2 className="flex items-center gap-2 text-base font-semibold text-gray-800 dark:text-gray-100">
+            <ShieldCheck className="h-5 w-5 text-brand" />
+            管理员名单
+          </h2>
+          <p className={HINT}>
+            这些 <strong>anticraft 用户名</strong>用 anticraft 登录或绑定时，在 AntiPrint 里直接获得管理员权限
+            （anticraft 开放接口不返回角色，所以用这份名单；用密码登录时会优先采用 anticraft 返回的角色）。增删即时生效。
+          </p>
+
+          {settingsError && (
+            <p className={`${ALERT_ERROR} mt-4`}>
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              {settingsError}
+            </p>
+          )}
+
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <input
+              className={`${INPUT} max-w-xs`}
+              value={newAdminUser}
+              placeholder="输入 anticraft 用户名"
+              onChange={(event) => setNewAdminUser(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  void addName('anticraft_admin_users', newAdminUser)
+                }
+              }}
+            />
+            <button
+              type="button"
+              className={BTN_PRIMARY}
+              disabled={listBusy || !newAdminUser.trim()}
+              onClick={() => void addName('anticraft_admin_users', newAdminUser)}
+            >
+              {listBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+              添加
+            </button>
+          </div>
+
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full min-w-[440px]">
+              <thead>
+                <tr className="border-b border-gray-100 dark:border-white/10">
+                  <th className={TH}>anticraft 用户名</th>
+                  <th className={TH}>本账号</th>
+                  <th className={TH}>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {adminNames.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="px-4 py-8 text-center text-sm text-gray-400">
+                      名单为空：anticraft 登录的账号一律是普通用户
+                    </td>
+                  </tr>
+                )}
+                {adminNames.map((name) => {
+                  const row = usersByName.get(name)
+                  return (
+                    <tr key={name} className="border-b border-gray-50 last:border-0 dark:border-white/5">
+                      <td className={`${TD} font-medium text-gray-800 dark:text-gray-100`}>{name}</td>
+                      <td className={TD}>
+                        {row ? (
+                          <span className="text-gray-500 dark:text-gray-400">
+                            已注册 · {ROLE_LABEL[row.role] ?? row.role}
+                            {row.anticraft_id ? ` · 绑定 ID ${row.anticraft_id}` : ''}
+                          </span>
+                        ) : (
+                          <span className="text-gray-400">本站还没有对应账号（等他首次登录/绑定）</span>
+                        )}
+                      </td>
+                      <td className={`${TD} whitespace-nowrap`}>
+                        <button
+                          type="button"
+                          className={BTN_SM_DANGER}
+                          disabled={listBusy}
+                          onClick={() => void removeName('anticraft_admin_users', name)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          移除
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {tab === 'anticraft' && (
+        <section className={CARD}>
+          <h2 className="flex items-center gap-2 text-base font-semibold text-gray-800 dark:text-gray-100">
+            <Link2 className="h-5 w-5 text-brand" />
+            anticraft 账号绑定
+          </h2>
+          <p className={HINT}>
+            在 anticraft 后台「绑定应用」登记本应用（client_id / client_secret / 精确回调地址）后填在这里，
+            用户就能用「跳转授权」登录或绑定 anticraft 账号。
+          </p>
+
+          {settingsError && (
+            <p className={`${ALERT_ERROR} mt-4`}>
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              {settingsError}
+            </p>
+          )}
+
+          <div className="mt-5 grid gap-5 md:grid-cols-2">
+            <div className="md:col-span-2">
+              <label className={LABEL} htmlFor="setting-anticraft-base">
+                anticraft 服务地址
+              </label>
+              <input
+                id="setting-anticraft-base"
+                className={INPUT}
+                value={anticraftBase}
+                placeholder="https://anticraft.top"
+                onChange={(event) => setAnticraftBase(event.target.value)}
+              />
+              <p className={HINT}>本机联调可填 http://localhost:3000，线上填 https://anticraft.top</p>
+            </div>
+
+            <div>
+              <label className={LABEL} htmlFor="setting-anticraft-client-id">
+                client_id
+              </label>
+              <input
+                id="setting-anticraft-client-id"
+                className={INPUT}
+                value={anticraftClientId}
+                onChange={(event) => setAnticraftClientId(event.target.value)}
+              />
+              <p className={HINT}>在 anticraft 后台「绑定应用」登记本应用后获得</p>
+            </div>
+
+            <div>
+              <label className={LABEL} htmlFor="setting-anticraft-client-secret">
+                client_secret
+              </label>
+              <input
+                id="setting-anticraft-client-secret"
+                className={INPUT}
+                type="password"
+                autoComplete="new-password"
+                value={anticraftClientSecret}
+                onChange={(event) => setAnticraftClientSecret(event.target.value)}
+                // 聚焦时清掉掩码占位，避免用户在原掩码后面接着输入
+                onFocus={() => {
+                  if (anticraftClientSecret === MASKED_SECRET) setAnticraftClientSecret('')
+                }}
+              />
+              <p className={HINT}>只在服务端使用；已配置时显示为 ******，留空表示不修改</p>
+            </div>
+
+            <div className="md:col-span-2">
+              <label className={LABEL} htmlFor="setting-anticraft-origins">
+                允许的授权来源
+              </label>
+              <input
+                id="setting-anticraft-origins"
+                className={INPUT}
+                value={anticraftOrigins}
+                placeholder="http://127.0.0.1:8301,http://localhost:3010"
+                onChange={(event) => setAnticraftOrigins(event.target.value)}
+              />
+              <p className={HINT}>
+                逗号分隔，需与 anticraft 登记的「回调地址」前缀一致，如 http://127.0.0.1:8301,http://localhost:3010
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-6 flex justify-end">
+            <button type="button" className={BTN_PRIMARY} onClick={() => void handleSaveSettings()} disabled={saving}>
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+              保存设置
+            </button>
+          </div>
+        </section>
+      )}
+
+      {tab === 'agent' && (
+        <section className={CARD}>
+          <h2 className="flex items-center gap-2 text-base font-semibold text-gray-800 dark:text-gray-100">
+            <Wifi className="h-5 w-5 text-brand" />
+            代理令牌
+          </h2>
+          <p className={HINT}>
+            打印代理用该令牌（请求头 X-Agent-Token）领取与回报任务；重置后需同步更新每台代理的 config.json。
+          </p>
+
+          <div className="mt-4 rounded-2xl border border-gray-100 bg-warm p-4 dark:border-white/10 dark:bg-white/5">
+            <div className="flex flex-wrap items-center gap-2">
+              <code
+                className="min-w-0 flex-1 select-all truncate rounded-xl bg-white px-3 py-2 font-mono text-xs text-gray-600 shadow-sm dark:bg-ink dark:text-gray-300"
+                title={settings?.agent_token || '（暂未生成）'}
+              >
+                {settings?.agent_token || '（暂未生成）'}
+              </code>
+              <button
+                type="button"
+                className={BTN_SM_SECONDARY}
+                disabled={!settings?.agent_token}
+                onClick={() => void handleCopyToken()}
+              >
+                <Copy className="h-3.5 w-3.5" />
+                {copied ? '已复制' : '复制'}
+              </button>
+              <button
+                type="button"
+                className={BTN_SM_DANGER}
+                disabled={!settings?.agent_token}
+                onClick={() => setRotateOpen(true)}
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                重置令牌
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* 重置令牌确认弹窗 */}
       <Modal

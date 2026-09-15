@@ -15,14 +15,16 @@ import {
   LoaderCircle,
   MousePointerClick,
   Printer,
+  QrCode,
   Store,
   Trash2,
   Truck,
   Upload,
   UserCog,
 } from 'lucide-react'
-import { api, getErrorMessage } from '../api'
+import { ApiError, api, getErrorMessage } from '../api'
 import DropZone from '../components/DropZone'
+import Modal from '../components/Modal'
 import TextField from '../components/TextField'
 import FileChips, { formatSize } from '../components/FileChips'
 import {
@@ -135,6 +137,12 @@ function SubmitPage() {
   const touchedRef = useRef(false)
   /** 当前选中文件的本地预览地址（本页负责创建与回收） */
   const [previewUrl, setPreviewUrl] = useState('')
+  /** 计费信息（余额/单价/是否免费）与本次扣费：免费账号不显示费用行 */
+  const [bill, setBill] = useState<{ balance: string; price: string; billable: boolean; free_reason: string } | null>(null)
+  const [charged, setCharged] = useState<{ charge: string; balance: string } | null>(null)
+  /** 余额不足弹窗（付款码暂未实现，先给占位说明） */
+  const [paywall, setPaywall] = useState<{ message: string; cost: string; balance: string } | null>(null)
+
   /** 当前选中的 Word/PPT 在服务端转成 PDF 后的预览地址（非 Office 文件为空） */
   const [officePreviewUrl, setOfficePreviewUrl] = useState('')
   const [officeConverting, setOfficeConverting] = useState(false)
@@ -145,6 +153,14 @@ function SubmitPage() {
   // 进入页面读取「我的配置」的默认配送方式与默认地址；读取失败静默忽略，不阻断提交
   useEffect(() => {
     let active = true
+    void api
+      .getBalance()
+      .then((info) => {
+        if (active) {
+          setBill({ balance: String(info.balance), price: info.price, billable: info.billable, free_reason: info.free_reason })
+        }
+      })
+      .catch(() => undefined)
     api
       .getProfile()
       .then((profile) => {
@@ -296,13 +312,29 @@ function SubmitPage() {
     try {
       const job = await api.submitJob(formData)
       setCreated(job)
+      // 计费以服务端为准（张数 × 单价）：成功后刷新余额，成功卡片展示本次扣费与剩余余额
+      const info = await api.getBalance().catch(() => null)
+      if (info) {
+        setBill({ balance: String(info.balance), price: info.price, billable: info.billable, free_reason: info.free_reason })
+        setCharged({ charge: String(job.charge ?? 0), balance: String(info.balance) })
+      }
       setPicked([])
       setSelectedIndex(0)
       setAddress('')
       setNote('')
       setStep(1)
     } catch (err) {
-      setError(getErrorMessage(err))
+      // 余额不足（402）：弹「付款码（暂未实现）」占位，而不是干巴巴一行红字
+      if (err instanceof ApiError && err.status === 402 && err.detail && typeof err.detail === 'object') {
+        const detail = err.detail as { message?: string; cost?: string; balance?: string }
+        setPaywall({
+          message: detail.message || '余额不足，请先充值',
+          cost: detail.cost || '0',
+          balance: detail.balance || '0',
+        })
+      } else {
+        setError(getErrorMessage(err))
+      }
     } finally {
       setSubmitting(false)
     }
@@ -331,6 +363,15 @@ function SubmitPage() {
             <span className="shrink-0 text-gray-400">配送方式</span>
             <span className="font-medium text-gray-700 dark:text-gray-200">{created.delivery_mode}</span>
           </li>
+          {charged && (
+            <li className="flex items-center justify-between gap-3">
+              <span className="shrink-0 text-gray-400">本次扣费</span>
+              <span className="font-medium text-gray-700 dark:text-gray-200">
+                {Number(charged.charge) > 0 ? `${Number(charged.charge).toFixed(2)} 元` : '免费'}
+                <span className="ml-2 text-xs text-gray-400">余额 {Number(charged.balance).toFixed(2)} 元</span>
+              </span>
+            </li>
+          )}
           {/* 打印设置逐个文件一行（每个文件可有自己的份数/纸张/页面范围等） */}
           <li className="space-y-2">
             <span className="text-gray-400">打印设置</span>
@@ -526,6 +567,54 @@ function SubmitPage() {
             </button>
           </div>
         </section>
+
+        {/* 余额不足：付款码暂未实现，先给占位说明（金额与余额都来自服务端 402 详情） */}
+        <Modal
+          open={paywall !== null}
+          title="余额不足"
+          size="sm"
+          onClose={() => setPaywall(null)}
+          footer={
+            <>
+              <button
+                type="button"
+                className={`${SECONDARY_BUTTON} flex-1 justify-center sm:flex-none`}
+                onClick={() => setPaywall(null)}
+              >
+                知道了
+              </button>
+              <Link
+                to="/balance"
+                className={`${PRIMARY_BUTTON} flex-1 justify-center sm:flex-none`}
+                onClick={() => setPaywall(null)}
+              >
+                去我的余额
+              </Link>
+            </>
+          }
+        >
+          <p className="text-sm text-gray-600 dark:text-gray-300">{paywall?.message}</p>
+          <div className="mt-4 flex items-center justify-between gap-3 rounded-xl bg-warm px-4 py-3 text-sm dark:bg-white/5">
+            <span className="text-gray-400">本单应付</span>
+            <span className="font-semibold text-gray-800 dark:text-gray-100">
+              {Number(paywall?.cost ?? 0).toFixed(2)} 元
+            </span>
+          </div>
+          <div className="mt-2 flex items-center justify-between gap-3 rounded-xl bg-warm px-4 py-3 text-sm dark:bg-white/5">
+            <span className="text-gray-400">当前余额</span>
+            <span className="font-semibold text-gray-800 dark:text-gray-100">
+              {Number(paywall?.balance ?? 0).toFixed(2)} 元
+            </span>
+          </div>
+          {/* 付款码占位：付款功能未实现，先把位置留出来 */}
+          <div className="mt-4 flex flex-col items-center gap-2 rounded-2xl border border-dashed border-gray-200 px-6 py-8 text-center dark:border-white/10">
+            <QrCode className="h-16 w-16 text-gray-300 dark:text-gray-600" />
+            <p className="text-sm font-medium text-gray-500 dark:text-gray-400">付款码暂未开放</p>
+            <p className="text-xs text-gray-400">
+              充值功能待实现；当前可联系管理员代记余额，或让管理员把账号加入免费白名单。
+            </p>
+          </div>
+        </Modal>
       </form>
     )
   }
@@ -740,6 +829,15 @@ function SubmitPage() {
                 <p className="text-xs text-amber-700 dark:text-amber">
                   实际打印会按「{scaleLabel}」缩放
                 </p>
+              )}
+              {bill?.billable && (
+                <p className="flex items-center gap-1.5 text-xs text-gray-400">
+                  <QrCode className="h-3.5 w-3.5" />
+                  按 {bill.price} 计费（每张纸），提交时从余额扣除，当前余额 {Number(bill.balance).toFixed(2)} 元
+                </p>
+              )}
+              {bill && !bill.billable && (
+                <p className="text-xs text-gray-400">免费账号（{bill.free_reason || '免打印费'}），提交不扣费</p>
               )}
             </div>
 

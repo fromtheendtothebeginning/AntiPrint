@@ -27,6 +27,8 @@ TABLES = {
         ("anticraft_id", "INT NULL"),
         ("default_address", "VARCHAR(255) NULL"),
         ("default_delivery", "VARCHAR(8) NOT NULL DEFAULT '配送'"),
+        # 账户余额（元）：计费账号提交任务时扣、驳回/撤回时退；DECIMAL 精确到分，避免浮点误差
+        ("balance", "DECIMAL(10,2) NOT NULL DEFAULT 0"),
         ("created_at", "DATETIME NOT NULL"),
     ],
     "print_jobs": [
@@ -44,6 +46,8 @@ TABLES = {
         ("claimed_at", "DATETIME NULL"),
         ("printed_at", "DATETIME NULL"),
         ("finished_at", "DATETIME NULL"),
+        # 本单实际扣掉的金额（元，0 = 免费账号或已退费）：退费后清零，是「这单花了多少钱」的唯一凭据
+        ("charge", "DECIMAL(10,2) NOT NULL DEFAULT 0"),
         ("created_at", "DATETIME NOT NULL"),
         ("updated_at", "DATETIME NOT NULL"),
     ],
@@ -75,6 +79,17 @@ TABLES = {
         ("last_seen", "DATETIME NULL"),
         ("created_at", "DATETIME NOT NULL"),
     ],
+    # 余额流水：每次扣费/退费/管理员调账都记一条，供「我的余额」页与对账使用
+    "balance_logs": [
+        ("id", "INT AUTO_INCREMENT PRIMARY KEY"),
+        ("user_id", "INT NOT NULL"),
+        ("delta", "DECIMAL(10,2) NOT NULL"),            # 正数=入账（退费/调账），负数=出账（扣费）
+        ("balance_after", "DECIMAL(10,2) NOT NULL"),    # 变动后余额（便于对账，不用重算）
+        ("reason", "VARCHAR(64) NOT NULL"),             # 打印扣费 / 驳回退费 / 撤回退费 / 管理员调整
+        ("job_id", "INT NULL"),
+        ("actor", "VARCHAR(64) NULL"),                  # 管理员调账时记是谁操作的
+        ("created_at", "DATETIME NOT NULL"),
+    ],
     "settings": [
         ("k", "VARCHAR(64) PRIMARY KEY"),
         ("v", "TEXT"),
@@ -83,12 +98,12 @@ TABLES = {
 
 USER_FIELDS = (
     "id", "username", "password_hash", "role", "source", "anticraft_id",
-    "default_address", "default_delivery", "created_at",
+    "default_address", "default_delivery", "balance", "created_at",
 )
 JOB_FIELDS = (
     "id", "user_id", "username", "status", "address", "note", "reject_reason", "print_error",
     "agent_id", "copies", "delivery_mode", "print_options", "claimed_at", "printed_at", "finished_at",
-    "created_at", "updated_at",
+    "charge", "created_at", "updated_at",
 )
 FILE_FIELDS = ("id", "job_id", "filename", "stored_name", "size", "sha256", "print_options", "created_at")
 AGENT_FIELDS = ("id", "name", "version", "printers", "launcher", "last_seen", "created_at")
@@ -102,6 +117,10 @@ SETTINGS_DEFAULTS = {
     # 打印代理连接开关：'1' = 正常（默认），'0' = 管理员在管理设置里「断开连接」，
     # 此时代理的注册/心跳/领取/下载/回报一律 403（见 agent_api.require_agent），恢复后自动续上
     "agent_enabled": "1",
+    # 每张（A4 纸）打印单价，元；计费账号提交任务时按 张数 × 单价 扣余额
+    "print_price": "0.1",
+    # 免费打印白名单（用户名，逗号分隔）：管理员/root、anticraft 账号、名单内账号不扣费
+    "free_users": "",
     "anticraft_base": "https://anticraft.top",
     "anticraft_client_id": "",
     "anticraft_client_secret": "",
@@ -255,10 +274,10 @@ def set_user_role(user_id, role):
 
 
 def list_users():
-    """用户列表（按注册顺序），带各自任务数，供用户管理页使用。"""
+    """用户列表（按注册顺序），带各自任务数与**余额**，供用户管理页使用。"""
     with tx() as cur:
         cur.execute(
-            "SELECT u.id, u.username, u.role, u.source, u.anticraft_id, u.created_at, "
+            "SELECT u.id, u.username, u.role, u.source, u.anticraft_id, u.balance, u.created_at, "
             "  (SELECT COUNT(*) FROM print_jobs j WHERE j.user_id = u.id) AS job_count "
             "FROM users u ORDER BY u.id"
         )
@@ -318,19 +337,43 @@ def _load_files(cur, job_ids):
     return grouped
 
 
-def create_job(user_id, address, note, files, delivery_mode=DELIVER, copies=1, print_options=None):
-    """创建打印任务：写 print_jobs + print_job_files + 一条建单日志。
+class InsufficientBalance(RuntimeError):
+    """余额不足：调用方映射成 402 并提示付款（付款码待实现）"""
+    def __init__(self, needed, balance):
+        self.needed = needed
+        self.balance = balance
+        super().__init__(f"余额不足：需要 {needed} 元，当前 {balance} 元")
+
+
+def create_job(user_id, address, note, files, delivery_mode=DELIVER, copies=1, print_options=None, charge=0):
+    """创建打印任务：写 print_jobs + print_job_files + 一条建单日志；charge > 0 时**同一事务里扣余额**。
 
     files 为已落盘的元数据列表：[{filename, stored_name, size, sha256}, ...]
     delivery_mode: 配送 / 取件（取件时 address 可为空串）
     copies: 份数（同时写进 copies 列与 print_options，代理侧直接用 print_options 拼命令行）
     print_options: 打印设置的 JSON 文本（双面/纸张/页面范围/每面页数/缩放），可为 None
+    charge: 本次扣费金额（元，Decimal 或数字）；余额不够抛 InsufficientBalance（事务回滚，不建单不扣钱）
+
+    扣款条件写在 UPDATE 的 WHERE 里（`balance >= charge`），并发提交也不会扣成负数。
     """
+    charge = Decimal(str(charge or 0)).quantize(Decimal("0.01"))
     with tx() as cur:
+        balance_after = None
+        if charge > 0:
+            cur.execute(
+                "UPDATE users SET balance = balance - %s WHERE id=%s AND balance >= %s",
+                (charge, user_id, charge),
+            )
+            if cur.rowcount == 0:
+                cur.execute("SELECT balance FROM users WHERE id=%s", (user_id,))
+                row = cur.fetchone()
+                raise InsufficientBalance(charge, (row["balance"] if row else Decimal("0")))
+            cur.execute("SELECT balance FROM users WHERE id=%s", (user_id,))
+            balance_after = cur.fetchone()["balance"]
         cur.execute(
-            "INSERT INTO print_jobs (user_id, status, address, note, copies, delivery_mode, print_options, created_at, updated_at) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())",
-            (user_id, S_PENDING, address, note or None, copies, delivery_mode, print_options),
+            "INSERT INTO print_jobs (user_id, status, address, note, copies, delivery_mode, print_options, charge, created_at, updated_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())",
+            (user_id, S_PENDING, address, note or None, copies, delivery_mode, print_options, charge),
         )
         job_id = cur.lastrowid
         for item in files:
@@ -350,7 +393,95 @@ def create_job(user_id, address, note, files, delivery_mode=DELIVER, copies=1, p
             "VALUES (%s,%s,%s,%s,%s,NOW())",
             (job_id, actor[:64], None, S_PENDING, "创建任务"),
         )
+        if charge > 0:
+            cur.execute(
+                "INSERT INTO balance_logs (user_id, delta, balance_after, reason, job_id, actor, created_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,NOW())",
+                (user_id, -charge, balance_after, "打印扣费", job_id, actor[:64]),
+            )
     return get_job(job_id)
+
+
+def add_balance(user_id, delta, reason, actor=None, job_id=None):
+    """加/减余额并写一条流水（退费、管理员调账都走它）。
+
+    返回 (是否成功, 变动后余额)；余额不足（扣成负数）时返回 (False, 当前余额) 且不写流水。
+    """
+    delta = Decimal(str(delta or 0)).quantize(Decimal("0.01"))
+    if delta == 0:
+        return True, get_balance(user_id)
+    with tx() as cur:
+        if delta < 0:
+            cur.execute(
+                "UPDATE users SET balance = balance + %s WHERE id=%s AND balance >= %s",
+                (delta, user_id, -delta),
+            )
+        else:
+            cur.execute("UPDATE users SET balance = balance + %s WHERE id=%s", (delta, user_id))
+        if cur.rowcount == 0:
+            cur.execute("SELECT balance FROM users WHERE id=%s", (user_id,))
+            row = cur.fetchone()
+            return False, (row["balance"] if row else Decimal("0"))
+        cur.execute("SELECT balance FROM users WHERE id=%s", (user_id,))
+        balance_after = cur.fetchone()["balance"]
+        cur.execute(
+            "INSERT INTO balance_logs (user_id, delta, balance_after, reason, job_id, actor, created_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,NOW())",
+            (user_id, delta, balance_after, reason[:64], job_id, (actor or None) and actor[:64]),
+        )
+    return True, balance_after
+
+
+def get_balance(user_id):
+    """当前余额（元，Decimal；用户不存在返回 0）"""
+    with tx() as cur:
+        cur.execute("SELECT balance FROM users WHERE id=%s", (user_id,))
+        row = cur.fetchone()
+    return row["balance"] if row else Decimal("0")
+
+
+def refund_job(job_id, reason, actor=None):
+    """把某任务已扣的钱退回去（charge 清零 + 加回余额 + 记流水）；没扣过钱则原样返回 0。
+
+    与「改 charge」在同一事务里完成，重复调用不会重复退款（charge 已为 0 就什么都不做）。
+    """
+    with tx() as cur:
+        cur.execute("SELECT user_id, charge FROM print_jobs WHERE id=%s FOR UPDATE", (job_id,))
+        row = cur.fetchone()
+        if not row:
+            return Decimal("0")
+        charge = Decimal(str(row["charge"] or 0)).quantize(Decimal("0.01"))
+        if charge <= 0:
+            return Decimal("0")
+        user_id = row["user_id"]
+        cur.execute("UPDATE print_jobs SET charge=0, updated_at=NOW() WHERE id=%s", (job_id,))
+        cur.execute("UPDATE users SET balance = balance + %s WHERE id=%s", (charge, user_id))
+        cur.execute("SELECT balance FROM users WHERE id=%s", (user_id,))
+        balance_after = cur.fetchone()["balance"]
+        cur.execute(
+            "INSERT INTO balance_logs (user_id, delta, balance_after, reason, job_id, actor, created_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,NOW())",
+            (user_id, charge, balance_after, reason[:64], job_id, (actor or None) and actor[:64]),
+        )
+    return charge
+
+
+def list_balance_logs(user_id=None, limit=50):
+    """余额流水（倒序）；user_id 为空返回全部（管理端对账用）"""
+    with tx() as cur:
+        if user_id is None:
+            cur.execute(
+                "SELECT l.*, u.username FROM balance_logs l LEFT JOIN users u ON u.id=l.user_id "
+                "ORDER BY l.id DESC LIMIT %s",
+                (int(limit),),
+            )
+        else:
+            cur.execute(
+                "SELECT l.*, u.username FROM balance_logs l LEFT JOIN users u ON u.id=l.user_id "
+                "WHERE l.user_id=%s ORDER BY l.id DESC LIMIT %s",
+                (user_id, int(limit)),
+            )
+        return [_plain(dict(row)) for row in cur.fetchall()]
 
 
 def list_jobs(user_id=None):

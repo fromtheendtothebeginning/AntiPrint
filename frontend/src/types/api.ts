@@ -65,6 +65,8 @@ export interface Job {
   finished_at: string | null
   /** 打印设置（份数/双面/纸张/页面范围/每面页数/缩放/颜色） */
   print_options?: PrintOptions
+  /** 本单实际扣费（元，0 = 免费账号或已退费） */
+  charge?: number | string
   files: JobFile[]
 }
 
@@ -78,6 +80,36 @@ export interface Profile {
   anticraft_id: number | null
   default_address: string
   default_delivery: DeliveryMode
+  /** 账户余额（元） */
+  balance: number | string
+  /** 是否要花钱打印（管理员/anticraft/白名单为 false） */
+  billable: boolean
+  /** 免费原因（免费账号才有） */
+  free_reason: string
+  /** 当前单价展示文本，如「0.1 元/张」 */
+  price: string
+}
+
+/** 余额流水（扣费/退费/管理员调账） */
+export interface BalanceLog {
+  id: number
+  delta: number | string
+  balance_after: number | string
+  reason: string
+  job_id: number | null
+  actor: string | null
+  created_at: string
+}
+
+/** 我的余额页数据 */
+export interface BalanceInfo {
+  balance: number | string
+  billable: boolean
+  free_reason: string
+  price: string
+  logs: BalanceLog[]
+  /** 付款码/充值是否已开放（当前一律 false = 暂未实现） */
+  recharge_enabled: boolean
 }
 
 export interface Agent {
@@ -107,6 +139,10 @@ export interface Settings {
   anticraft_admin_users: string
   /** 打印代理连接开关：'1' = 已连接（默认），'0' = 管理员在管理设置里断开了代理 */
   agent_enabled: string
+  /** 每张打印单价（元） */
+  print_price: string
+  /** 免费打印白名单（用户名，逗号分隔） */
+  free_users: string
 }
 
 /** anticraft 授权码登录的配置状态：enabled 为 false 时登录页禁用跳转按钮 */
@@ -124,4 +160,6 @@ export interface AdminUserRow {
   anticraft_id: number | null
   created_at: string
   job_count: number
+  /** 账户余额（元） */
+  balance: number | string
 }

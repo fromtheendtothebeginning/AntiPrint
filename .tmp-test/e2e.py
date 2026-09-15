@@ -83,10 +83,14 @@ uname = "testuser" + str(int(time.time()))
 st, r = call("POST", "/api/register", json_body={"username": uname, "password": "Test123456"})
 check("注册成功返回 token", st == 200 and "token" in r, f"{st} {r}")
 user_token = r.get("token")
+uid = r["user"]["id"]
 
 st, r = call("POST", "/api/login", json_body={"username": "admin", "password": "admin123"})
 check("管理员 admin/admin123 登录成功", st == 200 and r.get("user", {}).get("role") == "admin", f"{st} {r}")
 admin_token = r.get("token")
+
+# 计费：新账号余额为 0，先由管理员充 100 元，后面的提交才不会被 402 拦住
+call("POST", f"/api/users/{uid}/balance", token=admin_token, json_body={"delta": "100", "note": "测试充值"})
 
 st, r = call("POST", "/api/login", json_body={"username": "admin", "password": "wrongpass"})
 check("错误密码 401", st == 401, str(st))

@@ -1,5 +1,6 @@
 // 全站唯一请求出口：统一携带 Bearer 令牌、统一拦截 401 过期、统一转换为中文错误
 import type {
+  BalanceInfo,
   AdminUserRow,
   Agent,
   AnticraftOauthStatus,
@@ -110,6 +111,10 @@ export interface SettingsPayload {
   anticraft_client_secret?: string
   anticraft_origins?: string
   anticraft_admin_users?: string
+  /** 每张打印单价（元，0 ~ 100） */
+  print_price?: string
+  /** 免费打印白名单（用户名，逗号分隔） */
+  free_users?: string
 }
 
 /** 用户配置的请求体（默认地址 / 默认配送方式） */
@@ -125,18 +130,34 @@ export interface ResubmitPayload {
 }
 
 /** 读取后端错误信息：优先 detail / message 里的中文，兜底给通用中文文案 */
-async function readError(res: Response): Promise<string> {
+/** 带状态码与原始 detail 的错误：余额不足（402）等场景需要读结构化字段 */
+export class ApiError extends Error {
+  status: number
+  detail: unknown
+  constructor(message: string, status: number, detail: unknown) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.detail = detail
+  }
+}
+
+async function readErrorDetail(res: Response): Promise<{ message: string; detail: unknown }> {
   try {
     const data: unknown = await res.json()
     if (data && typeof data === 'object') {
       const raw = (data as { detail?: unknown; message?: unknown }).detail ?? (data as { message?: unknown }).message
-      if (typeof raw === 'string' && raw.trim()) return raw
-      if (Array.isArray(raw) && raw.length > 0) return '请求参数有误，请检查后重试'
+      if (typeof raw === 'string' && raw.trim()) return { message: raw, detail: raw }
+      if (raw && typeof raw === 'object') {
+        const message = (raw as { message?: unknown }).message
+        if (typeof message === 'string' && message.trim()) return { message, detail: raw }
+      }
+      if (Array.isArray(raw) && raw.length > 0) return { message: '请求参数有误，请检查后重试', detail: raw }
     }
   } catch {
     // 响应体不是 JSON，走下面的兜底文案
   }
-  return `请求失败（HTTP ${res.status}）`
+  return { message: `请求失败（HTTP ${res.status}）`, detail: null }
 }
 
 /** 发送请求并统一处理鉴权头与 401（登录接口本身除外） */
@@ -172,7 +193,10 @@ async function rawRequest(path: string, options: RequestOptions = {}): Promise<R
 /** 通用 JSON 请求；失败时抛出带中文信息的 Error */
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const res = await rawRequest(path, options)
-  if (!res.ok) throw new Error(await readError(res))
+  if (!res.ok) {
+    const { message, detail } = await readErrorDetail(res)
+    throw new ApiError(message, res.status, detail)
+  }
   if (res.status === 204) return undefined as T
   try {
     return (await res.json()) as T
@@ -343,6 +367,20 @@ export const api = {
     return data.settings
   },
 
+  /** 我的余额（含最近的扣费/退费流水） */
+  async getBalance(): Promise<BalanceInfo> {
+    return request<BalanceInfo>('/api/balance')
+  },
+
+  /** root 给账号加/减余额（充值暂未实现，先手工记账） */
+  async adjustBalance(userId: number, delta: string, note?: string): Promise<string> {
+    const data = await request<{ balance: string }>(`/api/users/${userId}/balance`, {
+      method: 'POST',
+      body: { delta, note },
+    })
+    return data.balance
+  },
+
   /** 管理端重置代理令牌，返回新令牌 */
   async rotateAgentToken(): Promise<string> {
     const data = await request<{ agent_token: string }>('/api/settings/rotate-agent-token', { method: 'POST' })
@@ -364,7 +402,7 @@ export const api = {
   async fetchFileBlob(jobId: number, fileId: number, download = false): Promise<Blob> {
     const path = `/api/jobs/${jobId}/files/${fileId}${download ? '?download=1' : ''}`
     const res = await rawRequest(path)
-    if (!res.ok) throw new Error(await readError(res))
+    if (!res.ok) throw new Error((await readErrorDetail(res)).message)
     return res.blob()
   },
 
@@ -373,7 +411,7 @@ export const api = {
     const form = new FormData()
     form.append('file', file, file.name)
     const res = await rawRequest('/api/preview/office', { method: 'POST', body: form })
-    if (!res.ok) throw new Error(await readError(res))
+    if (!res.ok) throw new Error((await readErrorDetail(res)).message)
     return res.blob()
   },
 }

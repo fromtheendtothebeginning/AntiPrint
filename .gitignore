@@ -24,6 +24,7 @@ deploy*.bat
 
 # 临时验证产物（测试脚本可留、截图不入库）
 .tmp-test/shots/
+.tmp-test/.admin-token.json   # 测试用的管理员令牌缓存，别提交
 
 # 编辑器/系统
 .vscode/

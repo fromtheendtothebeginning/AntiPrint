@@ -41,6 +41,8 @@ settings = get("/api/settings", admin).json()
 AGENT = settings["settings"]["agent_token"]
 
 reg = post("/api/register", {"username": "state" + tag, "password": "Test123456"}).json()
+# 计费：新账号余额为 0，先由管理员充 100 元（否则提交会被 402 拦住）
+post(f"/api/users/{reg['user']['id']}/balance", {"delta": "100", "note": "测试充值"}, token=admin)
 USER, UT = reg["user"]["username"], reg["token"]
 pdf_bytes = open(PDF, "rb").read()
 

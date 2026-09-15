@@ -1,5 +1,5 @@
 // 通用弹窗：遮罩点击关闭、Esc 关闭、打开时自动聚焦；危险操作把焦点落在取消按钮上
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { X } from 'lucide-react'
 
@@ -22,9 +22,30 @@ const SIZE_CLASS: Record<'sm' | 'md' | 'lg', string> = {
   lg: 'max-w-2xl',
 }
 
+/** 退场动画时长（ms）：与 index.css 的 pop-out/fade-out 对齐，播完再卸载 */
+const EXIT_MS = 170
+
 function Modal({ open, title, onClose, children, footer, size, danger = false }: ModalProps) {
   const sheetRef = useRef<HTMLDivElement>(null)
   const cancelRef = useRef<HTMLButtonElement>(null)
+  /** 关闭时先保持挂载播完退场动画，再真正卸载 */
+  const [mounted, setMounted] = useState(open)
+  const [closing, setClosing] = useState(false)
+
+  useEffect(() => {
+    if (open) {
+      setMounted(true)
+      setClosing(false)
+      return
+    }
+    if (!mounted) return
+    setClosing(true)
+    const timer = setTimeout(() => {
+      setMounted(false)
+      setClosing(false)
+    }, EXIT_MS)
+    return () => clearTimeout(timer)
+  }, [open, mounted])
 
   // Esc 关闭；打开期间锁定页面滚动
   useEffect(() => {
@@ -48,18 +69,20 @@ function Modal({ open, title, onClose, children, footer, size, danger = false }:
     else sheetRef.current?.focus()
   }, [open, danger])
 
-  if (!open) return null
+  if (!mounted) return null
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
+      className={`fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm ${
+        closing ? 'pointer-events-none animate-fade-out motion-reduce:animate-none' : 'animate-fade-in motion-reduce:animate-none'
+      }`}
       onClick={onClose}
     >
       <div
         ref={sheetRef}
-        className={`max-h-[85vh] w-full overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl focus:outline-none dark:bg-ink-soft ${
-          SIZE_CLASS[size ?? 'md']
-        }`}
+        className={`max-h-[85vh] w-full overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl focus:outline-none motion-reduce:animate-none dark:bg-ink-soft ${
+          closing ? 'animate-pop-out' : 'animate-pop-in'
+        } ${SIZE_CLASS[size ?? 'md']}`}
         role="dialog"
         aria-modal="true"
         aria-label={title}

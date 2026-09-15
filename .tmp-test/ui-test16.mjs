@@ -2,6 +2,7 @@
 // 运行：node D:/anticraft/AntiPrint/.tmp-test/ui-test16.mjs
 import { createRequire } from 'node:module'
 import fs from 'node:fs'
+import { adminTokenCached } from './lib/admin-token.mjs'
 
 const require = createRequire('file:///D:/anticraft/index/')
 const { chromium } = require('playwright-core')
@@ -27,8 +28,20 @@ const UNAME = 'row' + tag
 const UT = (await (await fetch(API + '/api/register', {
   method: 'POST', headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ username: UNAME, password: 'Test123456' }),
-})).json()).token
+})
+).json()).token
 const UH = { Authorization: 'Bearer ' + UT }
+
+// 计费：新账号余额为 0 → 管理员先充 100 元（充值功能待实现，管理员可手工代记）
+const CREDIT_ADMIN = { Authorization: 'Bearer ' + (await adminTokenCached(API)) }
+const CREDIT_ID = ((await (await fetch(API + '/api/users', { headers: CREDIT_ADMIN })).json()).users
+  .find((u) => u.username === UNAME) || {}).id
+if (CREDIT_ID) {
+  await fetch(`${API}/api/users/${CREDIT_ID}/balance`, {
+    method: 'POST', headers: { ...CREDIT_ADMIN, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ delta: '100', note: '测试充值' }),
+  })
+}
 const adminToken = (await (await fetch(API + '/api/login', {
   method: 'POST', headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ username: 'admin', password: 'admin123' }),
@@ -72,6 +85,7 @@ await fetch(`${API}/api/jobs/${jRejected.id}/reject`, {
 })
 // ④ 长地址任务（这一列允许换行）
 const jLong = await makeJob({ address: '上海市徐汇区某某路 100 号 3 号楼 502 室（进门左手第二个门，找王老师）' })
+
 
 const browser = await chromium.launch({ executablePath: CHROME, args: ['--no-sandbox'] })
 const ctx = await browser.newContext({ viewport: { width: 1500, height: 1000 } })

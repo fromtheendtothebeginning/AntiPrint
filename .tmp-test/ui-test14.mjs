@@ -2,6 +2,7 @@
 // 运行：node D:/anticraft/AntiPrint/.tmp-test/ui-test14.mjs
 import { createRequire } from 'node:module'
 import fs from 'node:fs'
+import { adminTokenCached } from './lib/admin-token.mjs'
 
 const require = createRequire('file:///D:/anticraft/index/')
 const { chromium } = require('playwright-core')
@@ -34,6 +35,18 @@ await fetch(API + '/api/register', {
   method: 'POST', headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ username: UNAME, password: 'Test123456' }),
 })
+
+
+// 计费：新账号余额为 0 → 管理员先充 100 元（充值功能待实现，管理员可手工代记）
+const CREDIT_ADMIN = { Authorization: 'Bearer ' + (await adminTokenCached(API)) }
+const CREDIT_ID = ((await (await fetch(API + '/api/users', { headers: CREDIT_ADMIN })).json()).users
+  .find((u) => u.username === UNAME) || {}).id
+if (CREDIT_ID) {
+  await fetch(`${API}/api/users/${CREDIT_ID}/balance`, {
+    method: 'POST', headers: { ...CREDIT_ADMIN, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ delta: '100', note: '测试充值' }),
+  })
+}
 
 const browser = await chromium.launch({ executablePath: CHROME, args: ['--no-sandbox'] })
 const ctx = await browser.newContext({
@@ -106,6 +119,41 @@ try {
   await page.waitForTimeout(700)
   const openBox = await page.locator('aside').boundingBox()
   check('点汉堡后侧栏滑出（x≈0）', !!openBox && Math.abs(openBox.x) < 2, openBox ? `x=${Math.round(openBox.x)}` : '不可见')
+
+  // 抽屉展开时：遮罩要盖住吸顶栏（顶栏被压暗），侧栏要压在最上层——三者不能互相打架
+  const layers = await page.evaluate(() => {
+    const overlay = document.querySelector('div[aria-hidden].fixed.inset-0')
+    const header = document.querySelector('header')
+    const aside = document.querySelector('aside')
+    const z = (el) => (el ? Number(getComputedStyle(el).zIndex) || 0 : -1)
+    // 取顶栏右侧（抽屉盖不到的地方）一个点，看最上层元素是谁
+    const box = header.getBoundingClientRect()
+    const probe = document.elementFromPoint(box.right - 8, box.top + box.height / 2)
+    return {
+      overlayZ: z(overlay), headerZ: z(header), asideZ: z(aside),
+      topElement: probe ? probe.tagName + '.' + (probe.className || '').toString().slice(0, 24) : '',
+      overlayCoversHeader: !!(overlay && overlay.contains(probe)) || probe === overlay,
+    }
+  })
+  check(`遮罩层级高于吸顶栏（${layers.overlayZ} > ${layers.headerZ}）`, layers.overlayZ > layers.headerZ, JSON.stringify(layers))
+  check(`侧栏层级高于遮罩（${layers.asideZ} > ${layers.overlayZ}）`, layers.asideZ > layers.overlayZ, '')
+  check('顶栏被遮罩盖住（点上去命中的是遮罩，顶栏变灰）', layers.overlayCoversHeader, layers.topElement)
+  // 侧栏分组：主入口在上，「我的配置 / 管理设置」贴底（用户卡片上方）
+  const navGroups = await page.evaluate(() => {
+    const navs = [...document.querySelectorAll('aside nav')]
+    const texts = (nav) => [...nav.querySelectorAll('a')].map((a) => a.innerText.trim())
+    const groups = navs.map(texts)
+    const card = document.querySelector('aside .border-t')
+    const lastNav = navs[navs.length - 1].getBoundingClientRect()
+    return {
+      groups,
+      bottomAboveCard: card ? lastNav.bottom <= card.getBoundingClientRect().top + 1 : false,
+    }
+  })
+  check('顶部组是日常入口（提交打印 / 我的任务）', navGroups.groups[0].includes('提交打印') && navGroups.groups[0].includes('我的任务'), JSON.stringify(navGroups.groups[0]))
+  check('底部组是「我的配置 / 管理设置」等设置项，且排在用户卡片上方',
+        navGroups.groups[navGroups.groups.length - 1].includes('我的配置') && navGroups.bottomAboveCard,
+        JSON.stringify(navGroups))
   await shot(page, 'M6-drawer-open')
   await page.locator('aside').getByRole('link', { name: /我的任务/ }).click()
   await page.waitForTimeout(1500)

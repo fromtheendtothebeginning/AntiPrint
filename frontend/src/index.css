@@ -24,6 +24,45 @@
 
   --shadow-card: 0 20px 25px -5px rgb(0 0 0 / 0.04), 0 8px 10px -6px rgb(0 0 0 / 0.04);
   --shadow-card-hover: 0 25px 50px -12px rgb(0 0 0 / 0.1);
+
+  /* 弹出 / 收起动画（弹窗 / 底部抽屉）：进入与退场成对，组件在退场期间保持挂载 */
+  --animate-fade-in: fade-in 160ms ease-out;
+  --animate-pop-in: pop-in 180ms cubic-bezier(0.22, 1, 0.36, 1);
+  --animate-sheet-up: sheet-up 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  --animate-fade-out: fade-out 140ms ease-in forwards;
+  --animate-pop-out: pop-out 160ms ease-in forwards;
+  --animate-sheet-down: sheet-down 220ms ease-in forwards;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 弹窗：淡入 + 轻微上浮缩小，避免「啪」地出现 */
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 底部抽屉：从屏幕下沿整体滑上来 */
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: none;
+  }
 }
 
 @layer base {
@@ -58,5 +97,36 @@
   }
   [data-theme='dark'] ::-webkit-scrollbar-thumb:hover {
     background-color: rgb(255 255 255 / 0.25);
+  }
+}
+
+@keyframes fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* 弹窗收起：轻微下沉 + 缩回 98% + 淡出（与 pop-in 对称） */
+@keyframes pop-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+/* 底部抽屉收起：整体滑回屏幕下沿 */
+@keyframes sheet-down {
+  from {
+    transform: none;
+  }
+  to {
+    transform: translateY(100%);
   }
 }

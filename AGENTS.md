@@ -11,6 +11,7 @@
 | 前端 | React 18 + Vite + **TypeScript（strict）**，`@/*` 路径别名；**Tailwind CSS v4 + lucide-react**（2026-09-14 全站换肤为暖色仪表盘风格，token 见「前端约定」；不再用页面私有 CSS / 内联 SVG 图标库） |
 | 后端 | Python 3.14 + FastAPI + PyMySQL + **MySQL 8**（与 `D:\anticraft\index`、`antiClass` 一致） |
 | 静默打印 | **本机常驻打印代理**领取任务后静默打印（不用 `window.print()`，浏览器无法程序化选打印机/份数） |
+| 计费 | **管理员/root、anticraft 账号、白名单（`settings.free_users`）免费**；其余账号按「张数 × 单价」扣余额，单价存 `settings.print_price`（默认 0.1 元/张，管理设置可改）。**提交时扣**、驳回/撤回/未出纸的删除**自动退**；充值/付款码**暂未实现**（余额由管理员在「用户管理」手工调整）。见「账户余额与计费」 |
 | 打印内容 | **仅文件上传**：PDF / 图片（png/jpg）直接可打印；**Word / PPT 上传时服务端先转 PDF**（LibreOffice headless，Windows 无 LibreOffice 时用本机 Office COM，见「Office 转 PDF」） |
 | 本地端口 | 后端 **8301**、Vite **3010**（3000/8000 被 `index`、**8300 被 natpierce 内网穿透工具占用**，2026-09-14 实测；3306 有 MySQL 在跑） |
 | 目标打印机 | `HP LaserJet Professional P1106`（USB001，本机唯一真实打印机，**主机型/GDI**）。**注意**：管理页「保存设置」会把下拉当前值一起写库，2026-09-14 18:25 被改成过 `Microsoft Print to PDF`（虚拟队列，静默打印会弹保存对话框）——改打印机后务必确认存的是 P1106。 |
@@ -46,12 +47,17 @@
 | 逐文件设置（API） | `backend\.venv\Scripts\python.exe .tmp-test/per_file_settings_test.py` | 12 项全通过：两文件两套设置各自落库、代理 claim 逐文件带设置、非法纸张/份数 0/非法范围/非 JSON 一律 400、settings 比文件短时缺的回落任务级、不传 settings 时任务级设置仍生效 |
 | 文件预览（我的任务 / 管理员队列） | `node .tmp-test/ui-test10.mjs` | 4 项全通过：走两步流程提交后，「我的任务」点文件名弹窗预览渲染 iframe、管理员队列预览正常；页面 JS 错误 0 |
 | 两步提交 + 逐文件打印设置 | `node .tmp-test/ui-test13.mjs` | 19 项全通过：第一步选两文件后逐文件各自的设置互不影响、页面范围让预览跳到 `#page=2`、每张页数提示「按 4 页/张排版」、切换文件预览在 iframe/img 间切换、第二步「返回修改打印设置」不丢状态、提交成功卡片逐文件列设置、后端按文件存了两套 print_options |
-| 手机端适配 | `node .tmp-test/ui-test14.mjs`（390×844 触摸视口） | 17 项全通过：登录页/提交第一步与第二步/我的任务/任务队列/管理设置/我的配置/用户管理**均无页面级横向溢出**（390/390）、小屏侧栏默认在屏幕外（x=-240）、点汉堡滑出到 x=0、点导航自动收起、手机端完整走通两步提交并成功、队列表格 1001px 靠容器内滚动且带「左右滑动」提示；页面 JS 错误 0 |
+| 手机端适配 | `node .tmp-test/ui-test14.mjs`（390×844 触摸视口） | 22 项全通过（2026-09-15 补 3 项层级断言 + 2 项侧栏分组断言）：**侧栏分两组——日常入口在上、设置项（我的配置/管理设置）贴底且在用户卡片上方**；**抽屉展开时遮罩层级高于吸顶栏（40 > 30）、侧栏高于遮罩（50 > 40）、顶栏被遮罩盖住（点上去命中的是遮罩 → 顶栏变灰，两者不再打架）**；登录页/提交第一步与第二步/我的任务/任务队列/管理设置/我的配置/用户管理**均无页面级横向溢出**（390/390）、小屏侧栏默认在屏幕外（x=-240）、点汉堡滑出到 x=0、点导航自动收起、手机端完整走通两步提交并成功、队列表格 1001px 靠容器内滚动且带「左右滑动」提示；页面 JS 错误 0 |
 | 撤回 / 重新打印 / 删除 | `backend\.venv\Scripts\python.exe .tmp-test/withdraw_reprint_test.py`（15 项）+ `node .tmp-test/ui-test15.mjs`（11 项） | API：待审核与已通过可撤回、已撤回/打印中/已打印不可撤、他人撤回 403、普通用户重打 403、已打印与待配送可重打且清掉 printed_at、重打后能被代理再次领取、已撤回不可重打、管理员可删除（删后 404）。UI：撤回按钮与确认弹窗、撤回后状态变「已撤回」且按钮消失、队列「重新打印」把任务打回已通过、「删除」二次确认后行消失且接口 404；页面 JS 错误 0 |
 | 内嵌预览（投放区变预览面板） | `node .tmp-test/ui-test11.mjs` | 12 项全通过：拖入 PDF 后投放提示消失、面板显示「正在预览」并渲染 iframe，继续拖入图片后点文件名可切换（img 出现、iframe 让位）、「放大查看」走弹窗、「清空」回到投放区、提交后我的任务与管理员队列预览仍正常；页面 JS 错误 0 |
 | 队列一行式布局（2026-09-15） | `node .tmp-test/ui-test16.mjs` | 16 项全通过：表头合并成 5 列、**除长地址外每行单行（49px，长地址行允许 101px）**、任务号/提交人/时间同行、文件与各自设置同行、配送徽章与地址同格、驳回理由截断成一行、操作区单行且「同意/驳回/删除」同一 y 坐标、**非地址列内容不溢出（超出即省略号）**、操作列装得下「重新打印/待配送/删除」、1920 视口下表格不横向滚动且操作列完整可见、点「同意」仍可用；页面 JS 错误 0 |
 | Office（Word/PPT）转 PDF（2026-09-15） | `powershell -File .tmp-test/make_office_fixtures.ps1`（造测试件）+ `backend\.venv\Scripts\python.exe .tmp-test/office_convert_test.py`（34 项）+ `node .tmp-test/ui-test17.mjs`（13 项） | API 34 项全通过：提交页预览接口把 docx/pptx 转成 PDF（`%PDF` 头、inline disposition）、非 Office/未登录/超 10MB/假 docx 一律 400、**含 docx+pptx+pdf 的混合任务提交成功且文件名保持原名**、用户与管理员预览拿到的都是转换后的 PDF（`原名.pdf`）而 `?download=1` 给原文件（zip 头 PK）、代理 claim 带 `print_name=原名.pdf` 且下载字节是 PDF、转换缓存按 sha256 命中（mtime 未变）且删任务后清理、docm/pptm 仍拒绝。UI 13 项全通过：投放区文案、转换中「正在把 Word/PPT 转成 PDF…」、右栏 iframe 预览 +「（Word/PPT 已转 PDF）」标注、加 PPT 一起提交成功、「我的任务」与管理员队列点文件名预览的都是 PDF、同意后代理领取到 PDF；页面 JS 错误 0。**本机实测耗时：Word ≈6s、PPT ≈23s**（Office COM；LibreOffice 一般更快） |
 | 代理断开 / 重连（2026-09-15） | `backend\.venv\Scripts\python.exe .tmp-test/agent_link_test.py`（11 项）+ `node .tmp-test/ui-test18.mjs`（13 项） | API：普通用户 403、断开后**注册/心跳/领取/下载/回报五个入口全 403**（提示含「断开」）、断开期间任务仍停「已通过」不被领取、重连后能领到排队任务并正常回报。UI：默认显示在线/离线 + 「断开连接」按钮、点击弹二次确认、断开后状态徽章变「打印代理已断开」且按钮变「重新连接」、服务端确实 403、点「重新连接」恢复且提示消失；页面 JS 错误 0 |
+| 队列移动端改造（2026-09-15） | `node .tmp-test/ui-test19.mjs`（16 项） | 手机端（390×844）：操作区 opacity=1 无需悬停、「查看文件与设置」图标按钮（内联文件名隐藏）、弹窗含文件名与设置摘要、点文件名可预览、「知道了」44px 整行宽、删除确认按钮 40px 整行宽且与取消并排、页面无横向溢出（表格 1002px 靠容器滚动）；桌面端（1600）：操作同样常显、仍显示内联文件名、不显示手机图标、确认按钮保持原大小；页面 JS 错误 0 |
+| 手机端任务详情抽屉 + 弹出动画（2026-09-15） | `node .tmp-test/ui-test21.mjs`（22 项） | 手机端（390×844）：点行弹出底部抽屉、抽屉里显示提交人/提交时间（含日期时分）/配送方式与完整地址/备注/文件与设置（点文件名可预览）；**操作按钮位于屏幕下半部（y=736 > 422）且 44px 高、与「删除」同一条底部操作区、抽屉贴着屏幕下沿（间距 0px）**；点「同意」后任务变已通过且抽屉自动关闭；「删除」仍走二次确认；桌面端点行不弹抽屉、内联操作按钮照旧。**弹出/收起动画断言**：抽屉面板 `animationName=sheet-up`、抽屉遮罩 `fade-in`、弹窗面板 `pop-in`、弹窗遮罩 `fade-in`；点「同意」后抽屉立刻进入 `sheet-down` 且播完才卸载、确认弹窗点「取消」后进入 `pop-out`（退场只播 ~200ms，用例用 `waitForAnimation()` 轮询抓，别等完再断言）。另：`ui-test19.mjs` 手机端断言同步更新为「行内只留『详情』入口，同意/驳回不在行内」17 项全通过 |
+| 管理页二级菜单 + 名单表格（2026-09-15） | `node .tmp-test/ui-test22.mjs`（18 项） | 六个分栏入口（打印设置/打印计费/免费白名单/管理员名单/anticraft 绑定/打印代理）都在；默认「打印设置」只显示启动器/份数/打印机、不含 client_id；计费分栏只有单价、没有白名单输入框；**白名单与管理员名单是表格**（表头 用户名/账号/操作）——添加后表格出现该行且服务端 `free_users`/`anticraft_admin_users` 已写入、未注册的名字标「本站没有这个账号（不会生效）」、移除后两边都清掉；anticraft 分栏有 client_id/secret/授权来源；代理分栏有状态/令牌/重置；切回打印设置仍能拿到打印机下拉；页面 JS 错误 0 |
+| 账户余额与计费（2026-09-15） | `backend\.venv\Scripts\python.exe .tmp-test/billing_test.py`（35 项）+ `node .tmp-test/ui-test20.mjs`（12 项） | API：默认单价 0.1、普通本地账号计费、余额 0 提交 **402 且不建单不扣钱**（detail 带 code/cost/balance/sheets）、充值后按 1 页×1 份扣 0.1、**3 份=0.3 / nup 2×2 且只打 1 页=0.1 / PPT 3 页=0.3**、**驳回与撤回各退回 0.1**（流水有「驳回退费」）、admin/anticraft/白名单三种免费、单价可改（0.5 生效，abc/500 各 400）、**调账权限**（普通用户 403、扣成负数 400、金额 0 400）。UI：用户管理页余额列 + 「调整余额」弹窗（调完列表刷新成 1.00）、我的余额页（¥1.00 / 计费账号 · 0.1 元/张 / 充值暂未开放 / 管理员调账 +¥1.00）、提交页「按 0.1 元/张 计费…当前余额 1.00 元」、成功卡片「本次扣费 0.10 元 + 余额 0.90 元」、余额不足弹**付款码（暂未开放）**占位（应付/余额/去我的余额）、管理员显示「免费账号」；页面 JS 错误 0 |
+| 计费上线后既有用例回归（2026-09-15） | 见 AGENTS.md 验证记录其余各行 | e2e 29/29、e2e2 26/26、role 19/19、office 34/34、ui-test13 19/19、ui-test14 22/22、ui-test16 16/16、ui-test17 13/13、ui-test19 16/16 —— 全部用例的测试账号已改为「注册后由管理员充 100 元」，否则新账号余额 0 会被 402 拦住 |
 | Office 转 PDF **线上部署**（2026-09-15） | `bash deploy/pack.sh` → `backend\.venv\Scripts\python.exe .tmp-test/prod_office_check.py`（口令从 `PROD_ADMIN_PW` 环境变量读，脚本不落口令） | 部署后：线上首页引用新 dist（`index-DNmMwP_w.js` 内含「Word/PPT 会先转成 PDF」文案）、`POST /api/preview/office` 返回 401（新接口已上线）、**线上提交 docx 成功且预览拿到 34532B 的 PDF、`?download=1` 给原 zip**、测试任务已删除（未审批 → 不会出纸）；服务器 soffice 用后端同款命令实跑 Word 2.7s / PPT 2.6s |
 
 **测试中修掉的真 bug（勿回退）**：
@@ -140,7 +146,7 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
 
 - 连接配置：`backend/db_config.json`（gitignore）—— 模板 `backend/db_config.example.json`；环境变量 `MYSQL_HOST/PORT/USER/PASSWORD/DB` 可覆盖；默认库 `antiprint`（utf8mb4）。密码字符集只用字母数字 `_` `-`（含 `@` 会破坏 URL 拼接，`index` 出过事故）。
 - 启动自动建库建表；**`create_all` 不给已存在的表补列** → 新增列必须同步写进 `db.py` 的 `run_migrations()`，否则旧库报 `Unknown column`（`index` 反复踩过）。
-- 表：`users`（含 role、`source`、`anticraft_id`、`default_address` 默认配送地址、`default_delivery` 默认配送方式）、`print_jobs`（status/address/note/reject_reason/print_error/agent_id/`delivery_mode` 配送方式/claimed_at/printed_at/`finished_at` 完成时间）、`print_job_files`（任务文件）、`print_jobs_logs`（流转留痕）、`agents`（设备+心跳+能力）、`settings`（k/v：agent_token、启动器、打印机、份数、dry_run、anticraft_* 等）。
+- 表：`users`（含 role、`source`、`anticraft_id`、`default_address` 默认配送地址、`default_delivery` 默认配送方式、**`balance` 余额**）、`print_jobs`（status/address/note/reject_reason/print_error/agent_id/`delivery_mode` 配送方式/claimed_at/printed_at/`finished_at` 完成时间）、`print_job_files`（任务文件）、`print_jobs_logs`（流转留痕）、`agents`（设备+心跳+能力）、`settings`（k/v：agent_token、启动器、打印机、份数、dry_run、agent_enabled、Print_price、free_users、anticraft_* 等）、**`balance_logs`（余额流水：delta / balance_after / reason / job_id / actor）**；`print_jobs` 另有 **`charge`**（本单扣费，退费后归零）。
 - **`set_status()` 只认白名单字段**（`allowed = {reject_reason, print_error, finished_at}`）：新增「随状态一起写」的列，必须同时加进这个集合，否则会被静默丢弃（2026-09-14 踩过：`finished_at` 没写进去）。
 - **`settings` 的值全是字符串**（如 copies=`'1'`、dry_run=`'0'`）：后端读出来要按字符串用，代理侧开关判断必须走 `truthy()`（见打印代理一节）。
 - `list_jobs` / `get_job` 已 JOIN `users` 带出 `username`（管理页「提交人」列），改 SQL 时别丢这个字段。
@@ -158,6 +164,32 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
   - anticraft 管理员映射：`_promote_if_anticraft_admin()` 只把 **user** 提升为 admin（不动 admin/root，不降级）；密码登录路径优先用 anticraft 返回的 `role`，OAuth 路径因其开放接口不返回角色，走设置项 `anticraft_admin_users`（逗号分隔用户名）。
 - 默认管理员播种（`ADMIN_PASSWORD` 环境变量可覆盖），登录限速（5 次/分钟/IP）。
 - **文件下载/预览必须鉴权**：仅任务提交人本人或管理员可取，带 `Content-Disposition` + `X-Content-Type-Options: nosniff`；`agents` 令牌只能领取/回报任务，**不得读他人文件**。
+
+## 账户余额与计费（2026-09-15 新增）
+
+**免费账号**：`role in (admin, root)`、`users.source='anticraft'`、用户名在 `settings.free_users`（逗号分隔）；其余一律计费。
+
+- **单价**：`settings.print_price`，默认 `0.1`（元/张）。管理设置页可改，服务端 `billing.parse_price()` 校验（0 ~ 100、两位小数，非法 400）。
+- **张数**（`billing.estimate()`）= Σ 每个文件 `ceil(实际打印页数 ÷ 每张页数) × 份数`：
+  页数取**可打印 PDF 的页数**（Office 用转换后的 PDF；图片按 1 页）；`每张页数` 来自该文件的 `nup`（"2,2" = 4 页/张）；
+  `实际打印页数` 受该文件的页面范围（"1-3,5"）限制；份数按「文件级 → 任务级 → 1」的优先级。
+  PDF 页数用 `billing.count_pdf_pages()`：先数明文 `/Type /Page`，数不到再解压 Flate 流数一遍（PDF 1.5+ 的对象流），解析失败按 1 页。
+- **扣款是原子的**：`db.create_job(..., charge=)` 在同一事务里 `UPDATE users SET balance = balance - charge WHERE id=%s AND balance >= charge`，
+  影响行数 0 就抛 `db.InsufficientBalance` → 接口回 **402**，**不建单、不扣钱**；并发提交也不会扣成负数。金额一律 `Decimal`（精确到分）。
+- **402 的响应体**：`detail = {code: "insufficient_balance", message, cost, balance, sheets}`；前端 `ApiError`（带 status/detail）识别后弹
+  「余额不足 → **付款码（暂未实现）**」占位弹窗（`SubmitPage` 的 `paywall`），并给「去我的余额」入口。
+- **退款**：`db.refund_job()` 把 `print_jobs.charge` 清零 + 加回余额 + 记流水，**同一事务**且幂等（charge 已 0 就什么都不做）。
+  触发点：**驳回**、**撤回**、**管理员删除**（仅当状态是 待审核/已通过/已驳回/已撤回，即没出过纸）。打印失败**不退**（可重新入队/重新打印，不会重复扣款）。
+- **余额与流水**：`users.balance`（DECIMAL(10,2)）、`print_jobs.charge`（本单实际扣了多少，退费后归零）、`balance_logs`（每次变动一行：
+  delta / balance_after / reason / job_id / actor）。用户侧 `GET /api/balance` 返回余额、是否计费、免费原因、单价与最近 50 条流水。
+- **谁可以调账**：`POST /api/users/{id}/balance`（body `{delta, note}`）**admin 与 root 都能**（充值是线下收款后手工记账；与「改单价/加白名单」同级的运营权限）。
+  用户管理页有「调整余额」按钮（正数加、负数扣，扣成负数会被拒）。
+- **前端**：`/balance`「我的余额」页（余额、账号类型、单价、消费记录、充值占位说明），导航在侧栏底部组；提交页第一步显示
+  「按 X 元/张 计费…当前余额 Y 元」（免费账号显示「免费账号（原因）」），成功后卡片显示「本次扣费 / 余额」。
+  管理设置页「打印计费」卡片改单价与白名单；用户管理页显示每人余额并可调账。
+- **测试注意**：`ui-test*.mjs` 里管理员令牌统一走 `.tmp-test/lib/admin-token.mjs` 的 `adminTokenCached()`（缓存 10 分钟 + 用 GET 抽查），避免连跑多个 UI 用例把登录接口的 10 次/分钟限速打满（2026-09-15 实测：连跑 4 个用例会 429 → 用例 0 项通过）。
+- **测试注意**：新注册的本地账号**余额为 0 → 提交会 402**。`.tmp-test` 里的老用例已统一在注册后加一句「管理员充 100 元」
+  （`patch_tests_credit.py` 的产物，见 AGENTS.md 验证记录）；新写用例照做，或者把账号加进白名单。
 
 ## 上传与安全
 
@@ -192,16 +224,21 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
   - 次按钮：`inline-flex items-center gap-1.5 rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-gray-600 shadow-lg shadow-black/5 hover:-translate-y-0.5 hover:shadow-xl dark:bg-ink-soft dark:text-gray-300`
   - 危险按钮：次按钮基础上换 `bg-clay text-white shadow-clay/25`
   - 输入/文本域：`w-full rounded-xl border border-gray-200 bg-warm px-4 py-2.5 text-sm text-gray-800 placeholder:text-gray-400 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30 dark:border-white/10 dark:bg-white/5 dark:text-gray-100`
-  - 表格：`w-full` + 表头 `border-b border-gray-100 dark:border-white/10` 与 `px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-400` + 行 `group border-b border-gray-50 transition-colors hover:bg-warm dark:border-white/5 dark:hover:bg-white/5`；行内操作按钮用 `opacity-0 transition-opacity group-hover:opacity-100`
+  - 表格：`w-full` + 表头 `border-b border-gray-100 dark:border-white/10` 与 `px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-400` + 行 `group border-b border-gray-50 transition-colors hover:bg-warm dark:border-white/5 dark:hover:bg-white/5`；行内操作按钮一般用 `opacity-0 transition-opacity group-hover:opacity-100`，**但任务队列是例外：操作按钮常显**（触屏没有 hover，`opacity-0` 在手机上等于永久隐藏，2026-09-15 实测踩过）
     - **任务队列表格用 `table-fixed` + `<colgroup>` 定宽**（2026-09-15）：任务 210 / 文件与设置 **auto**（吃剩余宽度）/ 配送方式与地址 220 / 状态 195 / 操作 285，表格 `min-w-[1210px]`。**别改回 `table-layout:auto`** —— 自动布局下各列会互相挤（长地址那一行把地址列压到 120px），于是短地址也换行、**每一行都从 49px 涨到 81px**，还会连累其他列。定宽后除地址列外每列内容都靠 `truncate`（+ `title` 悬停看全文）收敛成一行，行高稳定 49px。① 任务列 = `#号 + 提交人(flex-1 truncate) + 时间`，时间用 `shortTime()` 压成 `09/15 12:45`（完整值在 `title`）；② 文件列每个文件是 `min-w-0` 的可收缩块（文件名/设置摘要各自 `truncate`）；③ 状态列的驳回理由/打印错误用 `shorten(text, 8)` + `truncate`；④ 操作列按钮**不能带 `mt-*`**（会把该行按钮推到与同格其他按钮不同高度）。
   - 徽章：`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium`，配色一律「同色 10% 底 + 本色字」
   - 弹窗：遮罩 `fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm`，面板 `w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-ink-soft`
   - 空状态：`flex flex-col items-center gap-3 rounded-2xl border border-dashed border-gray-200 bg-white/60 px-6 py-16 text-center text-sm text-gray-400 dark:border-white/10 dark:bg-white/5`
   - 提示条：`flex items-start gap-2 rounded-xl px-4 py-3 text-sm` + 语义色
+- **弹出 / 收起动画**（`src/index.css` 的 `@theme` + `@keyframes`，**进入与退场成对**）：
+  进入：`animate-fade-in`（160ms 遮罩淡入）、`animate-pop-in`（180ms 弹窗淡入+轻微上浮缩小）、`animate-sheet-up`（260ms 底部抽屉从下沿滑上来，`cubic-bezier(0.22,1,0.36,1)`）；
+  收起：`animate-fade-out`（140ms）、`animate-pop-out`（160ms，下沉+缩回 98%+淡出）、`animate-sheet-down`（220ms 滑回下沿）。
+  实现：`Modal` 用 `mounted/closing` 两个 state —— `open` 变 false 后**先留 170ms 播退场**再卸载（退场期间 `pointer-events-none`，免得挡住下一次点击）；队列页手机端详情抽屉同理（`sheetJob` 保留内容 + `sheetClosing`，230ms）。**一律配 `motion-reduce:animate-none`** 尊重系统「减少动态效果」；退场时长常量（`EXIT_MS` / `SHEET_EXIT_MS`）要与 CSS 时长对齐。新增弹层照此配方，不要再写内联 `style` 动画。
 - **状态徽章取色**（6 个状态，勿改）：待审核 `bg-amber/15 text-amber-700 dark:text-amber`；已通过 `bg-brand/10 text-brand-dark dark:text-brand`；打印中 `bg-slate-teal/15 text-slate-teal`；已打印 `bg-emerald-500/10 text-emerald-600 dark:text-emerald-400`；已驳回 `bg-clay/10 text-clay`；打印失败 `bg-red-500/10 text-red-600 dark:text-red-400`。
 - **图标**：一律 `lucide-react`（`h-4 w-4` 行内 / `h-5 w-5` 标题与品牌 / `h-[18px] w-[18px]` 侧栏导航）；`components/Icons.tsx` 已废弃删除，不要再 import。
-- **外壳**：`App.tsx` 是参考实现——已登录 = 240px 可折叠侧栏（`w-60`↔`w-0`，主区 `ml-60`↔`ml-0` 过渡）+ 吸顶栏（`sticky top-0 bg-warm/80 backdrop-blur-md`，标题取自 `PAGE_META`）+ 右下角 toast；未登录 = 只有品牌条（登录页/回调页）。新页面照此风格写，不要再造导航。
-- **移动端适配（2026-09-15 起）**：断点用 Tailwind 默认（`lg` = 1024px）。① 侧栏：`<lg` 是**抽屉**（`fixed w-60` + `-translate-x-full` 收起，默认收起，点汉堡滑出、点遮罩或点导航自动收起，遮罩 `z-30`/侧栏 `z-40`）；`lg` 起才是常驻并把主区推到 `lg:ml-60`。② 内边距：`px-4 py-3 md:px-8 md:py-4` 一档缩放，副标题 `<sm` 隐藏。③ 预览高度随屏幕：提交页预览 `h-[300px] sm:h-[480px]`，弹窗 `h-[60vh] lg:h-[80vh]`。④ 表格保持 `min-w-*` + 容器 `overflow-x-auto`（页面本身不允许横向滚动），队列页在 `<lg` 提示「左右滑动查看完整表格」。⑤ 新增页面的验收要跑 `.tmp-test/ui-test14.mjs`（390×844 视口，检查每页 `documentElement.scrollWidth <= innerWidth`、抽屉行为、两步提交可走通）。
+- **管理设置页（`/admin`）是分栏的**：顶部一排二级菜单按钮（`TABS` 常量：打印设置/打印计费/免费白名单/管理员名单/anticraft 绑定/打印代理），每个分栏是一张独立 `CARD`，**增删类（两个名单）即时保存**、表单类（启动器/单价/anticraft 配置）要点「保存设置」。两个名单（`settings.free_users`、`settings.anticraft_admin_users`）是**表格 + 添加/移除**，并用 `/api/users` 交叉核对「本站有没有这个账号」（写错的名字不会生效，表格里标注出来）。
+- **外壳**：`App.tsx` 是参考实现——侧栏导航分**两组**：日常入口（提交打印 / 我的任务 / 任务队列）排在上面、设置类（我的配置 / 管理设置 / 用户管理，`bottom: true`）贴在**底部用户卡片上方**，两组共用 `renderNavLink` 的样式与「小屏点完收起抽屉」逻辑；已登录 = 240px 可折叠侧栏（`w-60`↔`w-0`，主区 `ml-60`↔`ml-0` 过渡）+ 吸顶栏（`sticky top-0 bg-warm/80 backdrop-blur-md`，标题取自 `PAGE_META`）+ 右下角 toast；未登录 = 只有品牌条（登录页/回调页）。新页面照此风格写，不要再造导航。
+- **移动端适配（2026-09-15 起）**：断点用 Tailwind 默认（`lg` = 1024px）。① 侧栏：`<lg` 是**抽屉**（`fixed w-60` + `-translate-x-full` 收起，默认收起，点汉堡滑出、点遮罩或点导航自动收起）；`lg` 起才是常驻并把主区推到 `lg:ml-60`。**z 层级有硬性顺序：吸顶栏 `z-30` < 抽屉遮罩 `z-40` < 抽屉 `z-50`**（`App.tsx`）。遮罩必须比吸顶栏高，否则顶栏会压在遮罩上、抽屉滑过时顶栏不被压暗，看起来就是「导航栏和侧边栏互相覆盖」（2026-09-15 修过：两者原来都是 `z-30`，同级时 DOM 靠后的顶栏赢）。② 内边距：`px-4 py-3 md:px-8 md:py-4` 一档缩放，副标题 `<sm` 隐藏。③ 预览高度随屏幕：提交页预览 `h-[300px] sm:h-[480px]`，弹窗 `h-[60vh] lg:h-[80vh]`。④ 表格保持 `min-w-*` + 容器 `overflow-x-auto`（页面本身不允许横向滚动），队列页在 `<lg` 提示「左右滑动查看完整表格」；**队列页专门做了移动端裁剪**：`<md` 时表格 `min-w-[920px]`、「文件与设置」列收成 92px 的图标按钮（带文件数）点了弹窗看明细、**点整行弹出「任务详情」底部抽屉**（提交人/提交时间/配送方式与地址/备注/文件与设置，可滚动）——**操作按钮集中在抽屉底部固定条**（44px 高、`flex-1 basis-[45%]` 两列排布、`padding-bottom` 带 `env(safe-area-inset-bottom)`，拇指够得到），行内只留一个「详情 ›」入口（`md:hidden` 的内联操作换成它，桌面端完全不变）；弹窗底部按钮用 `flex-1 sm:flex-none` 撑满整行。抽屉按 `detailId` 从最新 `jobs` 里取数据，所以 15 秒刷新或操作后状态会自动更新；抽屉里的操作执行完自动关闭。⑤ 新增页面的验收要跑 `.tmp-test/ui-test14.mjs`（390×844 视口，检查每页 `documentElement.scrollWidth <= innerWidth`、抽屉行为、两步提交可走通）。
 - 复用组件（勿重造）：`Modal`（确认弹窗统一用它，不用 `window.confirm`）、`DropZone`（`previewInline` 时**选完文件把投放区变成预览面板**：内嵌 iframe/img + 切换文件 + 继续添加 + 清空 + 放大查看）、`FileChips`、`TextField`（所有文本输入）、`ThemeToggle`、**`FilePreview`**（预览弹窗：PDF→iframe、图片→img、其它→提示下载；给 `jobId`+`fileId` 由组件带 Bearer 取 blob，或给 `localUrl` 预览本地文件）。预览入口共三处：提交页（拖入即内嵌预览，可放大到弹窗）、我的任务（本人上传件，弹窗）、任务队列（管理员，弹窗）。
 - react-router-dom v7，路由集中在 `App.tsx`，页面在 `src/pages/`。
 - 管理端预览 PDF 用**同源** blob→iframe（`/api/jobs/{id}/files/{fid}`，需 Bearer 头，所以走 `fetch` + `URL.createObjectURL`，关闭时 `revokeObjectURL`）；跨域源无法内嵌预览。
@@ -262,5 +299,7 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
 4. UI 链路：`node .tmp-test\ui-test3.mjs` 全绿（登录/提交/同意/驳回/预览/代理在线）；
 5. **真实出纸**：管理页同意一单 → 代理 `--once`（演练必须关闭）→ 任务转「已打印」+ 打印机队列清空（静默打印链路必须真机验证，不能只看接口返回）；
 6. 重启后端/代理后状态不丢（状态在 MySQL，不在内存）；
-7. **代理断开/重连**：`backend\.venv\Scripts\python.exe .tmp-test/agent_link_test.py` + `node .tmp-test/ui-test18.mjs` 全绿；**跑完必须确认 `settings.agent_enabled` 已回到 `1`**（用例收尾会断言，别把本机留在「已断开」——那样后续 e2e 的代理会全 403）；
-8. **Office（Word/PPT）**：`backend\.venv\Scripts\python.exe .tmp-test\office_convert_test.py`（34 项）+ `node .tmp-test\ui-test17.mjs`（13 项）全绿；**动过转换链路或换/重装服务器后**，另跑线上冒烟 `PROD_ADMIN_PW=... backend\.venv\Scripts\python.exe .tmp-test\prod_office_check.py`（提交 docx → 预览是 PDF → 删除任务，**不审批所以不会出纸**）。
+7. **计费**：`backend\.venv\Scripts\python.exe .tmp-test/billing_test.py`（35 项）+ `node .tmp-test/ui-test20.mjs`（12 项）全绿；
+   动过张数/扣费逻辑后，另跑 `e2e.py` 与 `ui-test13/16/19.mjs` 确认老用例没被 402 拦住（测试账号要先充值）；
+8. **代理断开/重连**：`backend\.venv\Scripts\python.exe .tmp-test/agent_link_test.py` + `node .tmp-test/ui-test18.mjs` 全绿；**跑完必须确认 `settings.agent_enabled` 已回到 `1`**（用例收尾会断言，别把本机留在「已断开」——那样后续 e2e 的代理会全 403）；
+9. **Office（Word/PPT）**：`backend\.venv\Scripts\python.exe .tmp-test\office_convert_test.py`（34 项）+ `node .tmp-test\ui-test17.mjs`（13 项）全绿；**动过转换链路或换/重装服务器后**，另跑线上冒烟 `PROD_ADMIN_PW=... backend\.venv\Scripts\python.exe .tmp-test\prod_office_check.py`（提交 docx → 预览是 PDF → 删除任务，**不审批所以不会出纸**）。

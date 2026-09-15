@@ -11,17 +11,31 @@ import {
   useLocation,
   useNavigate,
 } from 'react-router-dom'
-import { FileText, ListChecks, LogOut, PanelLeft, Printer, Settings, ShieldCheck, Upload, User, UserCog } from 'lucide-react'
+import {
+  FileText,
+  ListChecks,
+  LogOut,
+  PanelLeft,
+  Printer,
+  Settings,
+  ShieldCheck,
+  Upload,
+  User,
+  UserCog,
+  Wallet,
+} from 'lucide-react'
 import { api, clearToken, getToken, getUser, setOnAuthExpired, setUser as persistUser } from './api'
 import ThemeToggle from './components/ThemeToggle'
 import LoginPage from './pages/LoginPage'
 import AnticraftCallbackPage from './pages/AnticraftCallbackPage'
 import SubmitPage from './pages/SubmitPage'
 import MyJobsPage from './pages/MyJobsPage'
+import BalancePage from './pages/BalancePage'
 import ProfilePage from './pages/ProfilePage'
 import QueuePage from './pages/QueuePage'
 import AdminPage from './pages/AdminPage'
 import UsersPage from './pages/UsersPage'
+import type { LucideIcon } from 'lucide-react'
 import { ROLE_LABEL } from './constants'
 import type { User as UserType } from './types/api'
 
@@ -29,9 +43,10 @@ import type { User as UserType } from './types/api'
 const PAGE_META: Record<string, { title: string; subtitle: string }> = {
   '/submit': { title: '提交打印', subtitle: '上传文件、选择配送方式并填写地址，管理员审核通过后由本机打印代理出纸' },
   '/mine': { title: '我的任务', subtitle: '查看自己提交的打印任务与审核、打印、交接进度' },
+  '/balance': { title: '我的余额', subtitle: '账户余额、单价与打印扣费 / 退费记录（充值暂未开放）' },
   '/profile': { title: '我的配置', subtitle: '默认配送地址与配送方式，以及 anticraft 账号绑定' },
   '/queue': { title: '任务队列', subtitle: '审核打印任务，并在出纸后勾选待配送 / 待取件与完成' },
-  '/admin': { title: '管理设置', subtitle: '打印代理状态、打印参数、anticraft 绑定应用与代理令牌' },
+  '/admin': { title: '管理设置', subtitle: '按二级菜单分栏：打印设置 / 打印计费 / 免费白名单 / 管理员名单 / anticraft 绑定 / 打印代理' },
   '/users': { title: '用户管理', subtitle: '查看账号，并把普通用户提拔为管理员（仅超级管理员）' },
 }
 
@@ -143,6 +158,14 @@ function App() {
         }
       />
       <Route
+        path="/balance"
+        element={
+          <RequireAuth user={user}>
+            <BalancePage />
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/profile"
         element={
           <RequireAuth user={user}>
@@ -213,24 +236,50 @@ function App() {
 
   const meta = PAGE_META[location.pathname] ?? PAGE_META['/submit']
 
+  // bottom: true 的项贴侧栏底部显示（用户卡片上方），其余按顺序排在顶部
   const navItems = [
     { to: '/submit', label: '提交打印', Icon: Upload, admin: false },
     { to: '/mine', label: '我的任务', Icon: FileText, admin: false },
-    { to: '/profile', label: '我的配置', Icon: UserCog, admin: false },
     { to: '/queue', label: '任务队列', Icon: ListChecks, admin: true },
-    { to: '/admin', label: '管理设置', Icon: Settings, admin: true },
-    { to: '/users', label: '用户管理', Icon: ShieldCheck, root: true },
+    { to: '/balance', label: '我的余额', Icon: Wallet, admin: false, bottom: true },
+    { to: '/profile', label: '我的配置', Icon: UserCog, admin: false, bottom: true },
+    { to: '/admin', label: '管理设置', Icon: Settings, admin: true, bottom: true },
+    { to: '/users', label: '用户管理', Icon: ShieldCheck, root: true, bottom: true },
   ].filter((item) => {
     if ('root' in item && item.root) return user.role === 'root'
     if (item.admin) return user.role === 'admin' || user.role === 'root'
     return true
   })
+  const mainNav = navItems.filter((item) => !item.bottom)
+  const bottomNav = navItems.filter((item) => item.bottom)
+
+  /** 侧栏导航项（顶部与底部两组共用同一套样式与收起逻辑） */
+  const renderNavLink = ({ to, label, Icon }: { to: string; label: string; Icon: LucideIcon }) => (
+    <NavLink
+      key={to}
+      to={to}
+      className={({ isActive }) =>
+        `flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm transition-all duration-200 ${
+          isActive
+            ? 'bg-brand font-medium text-white shadow-lg shadow-brand/25'
+            : 'text-gray-500 hover:bg-warm hover:text-gray-800 hover:shadow-sm dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-gray-100'
+        }`
+      }
+      onClick={() => {
+        // 小屏是抽屉：点完导航就收起，免得挡住内容
+        if (window.innerWidth < 1024) setSidebarOpen(false)
+      }}
+    >
+      <Icon className="h-[18px] w-[18px] shrink-0" />
+      <span className="whitespace-nowrap font-medium">{label}</span>
+    </NavLink>
+  )
 
   return (
     <div className="min-h-screen">
-      {/* 侧栏 */}
+      {/* 侧栏：小屏是抽屉（z-50，压在吸顶栏与遮罩之上），lg 起常驻 */}
       <aside
-        className={`fixed left-0 top-0 z-40 h-full w-60 overflow-hidden border-r border-gray-200/60 bg-white transition-transform duration-300 dark:border-white/10 dark:bg-ink-soft lg:transition-[width] ${
+        className={`fixed left-0 top-0 z-50 h-full w-60 overflow-hidden border-r border-gray-200/60 bg-white transition-transform duration-300 dark:border-white/10 dark:bg-ink-soft lg:transition-[width] ${
           sidebarOpen ? 'translate-x-0' : '-translate-x-full'
         } ${sidebarOpen ? 'lg:w-60' : 'lg:w-0 lg:translate-x-0'}`}
       >
@@ -244,28 +293,10 @@ function App() {
             </span>
           </div>
 
-          <nav className="flex-1 space-y-1">
-            {navItems.map(({ to, label, Icon }) => (
-              <NavLink
-                key={to}
-                to={to}
-                className={({ isActive }) =>
-                  `flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm transition-all duration-200 ${
-                    isActive
-                      ? 'bg-brand font-medium text-white shadow-lg shadow-brand/25'
-                      : 'text-gray-500 hover:bg-warm hover:text-gray-800 hover:shadow-sm dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-gray-100'
-                  }`
-                }
-                onClick={() => {
-                  // 小屏是抽屉：点完导航就收起，免得挡住内容
-                  if (window.innerWidth < 1024) setSidebarOpen(false)
-                }}
-              >
-                <Icon className="h-[18px] w-[18px] shrink-0" />
-                <span className="whitespace-nowrap font-medium">{label}</span>
-              </NavLink>
-            ))}
-          </nav>
+          <nav className="flex-1 space-y-1">{mainNav.map(renderNavLink)}</nav>
+
+          {/* 配置类入口固定在侧栏底部（用户卡片上方），与日常操作分开 */}
+          <nav className="space-y-1">{bottomNav.map(renderNavLink)}</nav>
 
           <div className="mt-6 border-t border-gray-100 pt-6 dark:border-white/10">
             <div className="flex items-center gap-3 px-2">
@@ -285,10 +316,12 @@ function App() {
         </div>
       </aside>
 
-      {/* 小屏抽屉打开时的遮罩：点击即收起 */}
+      {/* 小屏抽屉打开时的遮罩：点击即收起。
+          z 必须比吸顶栏（z-30）高，否则顶栏会压在遮罩之上、抽屉滑过时不被压暗，
+          看起来就是「导航栏与侧边栏互相覆盖」；侧栏本身 z-50 再压在遮罩之上。 */}
       {sidebarOpen && (
         <div
-          className="fixed inset-0 z-30 bg-black/40 backdrop-blur-sm lg:hidden"
+          className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm lg:hidden"
           aria-hidden
           onClick={() => setSidebarOpen(false)}
         />

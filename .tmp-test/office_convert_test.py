@@ -43,6 +43,9 @@ tag = str(int(time.time()))[-6:]
 admin = requests.post(f"{BASE}/api/login", json={"username": "admin", "password": "admin123"}, timeout=20).json()["token"]
 reg = requests.post(f"{BASE}/api/register", json={"username": "office" + tag, "password": "Test123456"}, timeout=20).json()
 UT = reg["token"]
+# 计费：新账号余额为 0，先由管理员充 100 元（否则提交会被 402 拦住）
+requests.post(f"{BASE}/api/users/{reg['user']['id']}/balance", headers=auth(admin),
+              json={"delta": "100", "note": "测试充值"}, timeout=20)
 AGENT = requests.get(f"{BASE}/api/settings", headers=auth(admin), timeout=20).json()["settings"]["agent_token"]
 GH = {"X-Agent-Token": AGENT}
 
