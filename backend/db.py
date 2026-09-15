@@ -393,10 +393,10 @@ def set_status(job_id, to_status, actor, remark=None, from_status=None, **fields
     """状态流转（必须写 print_jobs_logs 留痕），并维护 updated_at。
 
     - from_status 非空时作为乐观锁：仅当前状态一致才更新（防并发重复操作）；
-    - 额外关键字字段（reject_reason / print_error / finished_at，值为 None 表示清空）与状态同事务更新；
+    - 额外关键字字段（reject_reason / print_error / finished_at / printed_at / agent_id，值为 None 表示清空）与状态同事务更新；
     - 返回是否更新成功（任务不存在或状态不符返回 False）。
     """
-    allowed = {"reject_reason", "print_error", "finished_at"}
+    allowed = {"reject_reason", "print_error", "finished_at", "printed_at", "agent_id"}
     with tx() as cur:
         cur.execute("SELECT status FROM print_jobs WHERE id=%s", (job_id,))
         row = cur.fetchone()

@@ -24,6 +24,7 @@ export type JobStatus =
   | '待配送'
   | '待取件'
   | '已完成'
+  | '已撤回'
 
 /** 任务的打印设置（后端 print_options；空对象/缺字段表示用打印机驱动默认值） */
 export interface PrintOptions {

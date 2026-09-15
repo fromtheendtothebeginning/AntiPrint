@@ -25,6 +25,7 @@ import argparse
 import json
 import logging
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -57,8 +58,11 @@ LOG_BACKUP_COUNT = 3
 # Windows 专有：子进程不弹控制台窗口；非 Windows 传 0
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
-# SumatraPDF 3.6.1 未入 PATH，用绝对路径
-DEFAULT_SUMATRA_PATH = r"C:\Users\86133\AppData\Local\SumatraPDF\SumatraPDF.exe"
+# SumatraPDF 不在 PATH 里，按这几处常见位置探测（每台机器路径不同，见 find_sumatra）
+SUMATRA_SEARCH_DIRS = (
+    r"C:\Program Files\SumatraPDF",
+    r"C:\Program Files (x86)\SumatraPDF",
+)
 
 HEARTBEAT_INTERVAL = 30  # 心跳间隔（秒），轮询周期内按时间戳判断
 PRINT_TIMEOUT = 90  # 单个文件打印超时（秒）
@@ -77,7 +81,7 @@ DEFAULT_CONFIG = {
     "copies": 1,
     "dry_run": False,
     "poll_interval": 5,
-    "sumatra_path": DEFAULT_SUMATRA_PATH,
+    "sumatra_path": "",  # 留空 = 自动查找（见 find_sumatra）
 }
 
 LOG = logging.getLogger("antiprint.agent")
@@ -232,6 +236,23 @@ def list_printers() -> list[str]:
     if not printers:
         LOG.warning("未枚举到任何打印机（检查打印机是否已安装/在线）")
     return printers
+
+
+def find_sumatra(configured: str = "") -> str:
+    """查找 SumatraPDF：配置路径 → %LOCALAPPDATA%\\SumatraPDF → Program Files → PATH。
+
+    返回完整路径；找不到返回空串（调用方给出中文提示）。分发包要装到别人的电脑上，
+    所以不能写死某一台机器的路径。
+    """
+    candidates = [str(configured or "").strip()]
+    local_appdata = os.environ.get("LOCALAPPDATA")
+    if local_appdata:
+        candidates.append(str(Path(local_appdata) / "SumatraPDF" / "SumatraPDF.exe"))
+    candidates += [str(Path(folder) / "SumatraPDF.exe") for folder in SUMATRA_SEARCH_DIRS]
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            return candidate
+    return shutil.which("SumatraPDF") or shutil.which("SumatraPDF.exe") or ""
 
 
 # ---------------------------------------------------------------- 配置
@@ -485,9 +506,12 @@ class PrintAgent:
         self, file_path: Path, printer_name: str, copies: int, options: dict | None = None
     ) -> list[str]:
         """拼 SumatraPDF 静默打印命令（份数与打印设置统一走 -print-settings）。"""
-        exe = str(self.cfg.get("sumatra_path") or "").strip() or DEFAULT_SUMATRA_PATH
-        if not Path(exe).is_file():
-            raise PrintError("未找到 SumatraPDF：%s（请检查 config.json 的 sumatra_path）" % exe)
+        exe = find_sumatra(self.cfg.get("sumatra_path"))
+        if not exe:
+            raise PrintError(
+                "未找到 SumatraPDF，请先安装（https://www.sumatrapdfreader.org/），"
+                "或在 config.json 的 sumatra_path 里填写完整路径"
+            )
 
         command = [exe]
         if printer_name and printer_name.strip().lower() != "default":
@@ -654,33 +678,45 @@ class PrintAgent:
 
 
 def selftest(config_path: str) -> int:
-    """自检：读配置 → 枚举打印机 → 注册/心跳。全部通过返回 0，否则 1。"""
+    """自检：读配置 → 枚举打印机 → 注册/心跳 → 查 SumatraPDF。全部通过返回 0，否则 1。"""
     try:
         cfg = load_config(config_path)
     except ConfigError as exc:
         emit("自检失败：%s" % exc, logging.ERROR)
         return 1
 
-    emit("自检 1/3 配置读取：OK（名称=%s，服务端=%s，启动器=%s，打印机=%s，份数=%s）"
+    emit("自检 1/4 配置读取：OK（名称=%s，服务端=%s，启动器=%s，打印机=%s，份数=%s）"
          % (cfg["name"], cfg["server"], cfg.get("launcher"), cfg.get("printer_name"), cfg.get("copies")))
 
     printers = list_printers()
     if printers:
-        emit("自检 2/3 打印机枚举：OK（共 %d 台：%s）" % (len(printers), "、".join(printers)))
+        emit("自检 2/4 打印机枚举：OK（共 %d 台：%s）" % (len(printers), "、".join(printers)))
     else:
-        emit("自检 2/3 打印机枚举：警告，未枚举到打印机（代理仍可运行，但可能无法出纸）", logging.WARNING)
+        emit("自检 2/4 打印机枚举：警告，未枚举到打印机（代理仍可运行，但可能无法出纸）", logging.WARNING)
 
     agent = PrintAgent(cfg)
     agent.printers = printers
     agent.register()  # 失败只记警告，不影响自检结论
     if agent.heartbeat():
-        emit("自检 3/3 服务端心跳：OK（%s/api/agent/heartbeat）" % cfg["server"])
+        emit("自检 3/4 服务端心跳：OK（%s/api/agent/heartbeat）" % cfg["server"])
     else:
-        emit("自检 3/3 服务端心跳：失败（检查服务端是否启动、令牌是否正确）", logging.ERROR)
+        emit("自检 3/4 服务端心跳：失败（检查服务端是否启动、令牌是否正确）", logging.ERROR)
         return 1
 
-    emit("自检通过。dry_run=%s，SumatraPDF=%s（存在：%s）"
-         % (cfg.get("dry_run"), cfg.get("sumatra_path"), Path(str(cfg.get("sumatra_path"))).is_file()))
+    # 最后查 SumatraPDF：缺了就直接判失败，否则「自检通过」但一张纸也打不出来
+    launcher = str(agent.effective("launcher") or "sumatra").strip().lower()
+    sumatra = find_sumatra(cfg.get("sumatra_path"))
+    if launcher == "default":
+        emit("自检 4/4 SumatraPDF：跳过（启动器=系统默认关联程序，不需要 SumatraPDF）")
+    elif sumatra:
+        emit("自检 4/4 SumatraPDF：OK（%s）" % sumatra)
+    else:
+        emit("自检 4/4 SumatraPDF：未找到 —— 请先安装 SumatraPDF"
+             "（https://www.sumatrapdfreader.org/），或在 config.json 的 sumatra_path 里填完整路径",
+             logging.ERROR)
+        return 1
+
+    emit("自检通过。dry_run=%s" % cfg.get("dry_run"))
     return 0
 
 

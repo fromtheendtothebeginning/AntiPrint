@@ -13,6 +13,7 @@ import {
   Printer,
   RefreshCw,
   Truck,
+  Undo2,
 } from 'lucide-react'
 import { api, getErrorMessage } from '../api'
 import FileChips from '../components/FileChips'
@@ -25,6 +26,8 @@ import {
   STATUS_AWAIT_DELIVERY,
   STATUS_AWAIT_PICKUP,
   STATUS_DONE,
+  STATUS_APPROVED,
+  STATUS_PENDING,
   STATUS_REJECTED,
   describePrintOptions,
   formatTime,
@@ -50,6 +53,8 @@ function MyJobsPage() {
   const [jobs, setJobs] = useState<Job[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  /** 操作成功提示（如「已撤回」），几秒后自动消失 */
+  const [notice, setNotice] = useState('')
 
   // 重新提交弹窗状态
   const [resubmitJob, setResubmitJob] = useState<Job | null>(null)
@@ -57,8 +62,35 @@ function MyJobsPage() {
   const [note, setNote] = useState('')
   const [modalError, setModalError] = useState('')
   const [busy, setBusy] = useState(false)
+  /** 撤回确认弹窗的目标任务 */
+  const [withdrawJob, setWithdrawJob] = useState<Job | null>(null)
   /** 正在预览的文件（点文件名打开，PDF/图片走同源鉴权接口取 blob） */
   const [preview, setPreview] = useState<{ jobId: number; fileId: number; filename: string } | null>(null)
+
+  useEffect(() => {
+    if (!notice) return
+    const timer = setTimeout(() => setNotice(''), 4000)
+    return () => clearTimeout(timer)
+  }, [notice])
+
+  /** 撤回自己的任务（仅未出纸时可用，服务端会再校验一次状态） */
+  async function confirmWithdraw() {
+    if (!withdrawJob) return
+    setBusy(true)
+    setModalError('')
+    try {
+      const id = withdrawJob.id
+      await api.withdrawJob(id)
+      setWithdrawJob(null)
+      setNotice(`任务 #${id} 已撤回`)
+      await load()
+    } catch (err) {
+      setModalError(getErrorMessage(err))
+      await load()
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const load = useCallback(async () => {
     try {
@@ -128,6 +160,13 @@ function MyJobsPage() {
           刷新
         </button>
       </div>
+
+      {notice && (
+        <p className="flex items-start gap-2 rounded-xl bg-brand/10 px-4 py-3 text-sm text-brand-dark dark:text-brand">
+          <CircleCheck className="mt-0.5 h-4 w-4 shrink-0" />
+          {notice}
+        </p>
+      )}
 
       {error && (
         <p className={ALERT_ERROR}>
@@ -220,6 +259,23 @@ function MyJobsPage() {
                   </div>
                 )}
               </dl>
+
+              {/* 撤回：出纸之前（待审核 / 已通过）提交人可以自己撤单 */}
+              {(job.status === STATUS_PENDING || job.status === STATUS_APPROVED) && (
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-warm px-4 py-3 dark:bg-white/5">
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    还没出纸，可以撤回；撤回后需要重新提交
+                  </p>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-white px-4 py-2 text-sm font-medium text-clay shadow-lg shadow-black/5 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xl dark:bg-ink-soft"
+                    onClick={() => setWithdrawJob(job)}
+                  >
+                    <Undo2 className="h-4 w-4" />
+                    撤回
+                  </button>
+                </div>
+              )}
 
               {job.status === STATUS_REJECTED && (
                 <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-clay/10 px-4 py-3">
@@ -331,6 +387,41 @@ function MyJobsPage() {
             </p>
           )}
         </div>
+      </Modal>
+
+      {/* 撤回确认：出纸前才能撤，服务端会再校验一次状态 */}
+      <Modal
+        open={withdrawJob !== null}
+        title={withdrawJob ? `撤回任务 #${withdrawJob.id}` : '撤回任务'}
+        onClose={() => setWithdrawJob(null)}
+        danger
+        size="sm"
+        footer={
+          <>
+            <button type="button" className={BTN_SECONDARY} disabled={busy} onClick={() => setWithdrawJob(null)}>
+              取消
+            </button>
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-clay px-4 py-2 text-sm font-medium text-white shadow-lg shadow-clay/25 transition-all duration-200 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={busy}
+              onClick={() => void confirmWithdraw()}
+            >
+              {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Undo2 className="h-4 w-4" />}
+              确认撤回
+            </button>
+          </>
+        }
+      >
+        <p className="text-sm text-gray-600 dark:text-gray-300">
+          撤回后该任务会标记为「已撤回」，需要重新提交才能打印。
+        </p>
+        {modalError && (
+          <p className={ALERT_ERROR}>
+            <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+            {modalError}
+          </p>
+        )}
       </Modal>
 
       {/* 文件预览：点文件名即可看自己的上传件（PDF iframe / 图片 img，接口带鉴权取 blob） */}

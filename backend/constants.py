@@ -13,11 +13,18 @@ S_FAILED = "打印失败"
 S_AWAIT_DELIVERY = "待配送"
 S_AWAIT_PICKUP = "待取件"
 S_DONE = "已完成"
+S_WITHDRAWN = "已撤回"      # 提交人在出纸前撤回自己的任务
 
 STATUSES = (
     S_PENDING, S_APPROVED, S_PRINTING, S_PRINTED, S_REJECTED, S_FAILED,
-    S_AWAIT_DELIVERY, S_AWAIT_PICKUP, S_DONE,
+    S_AWAIT_DELIVERY, S_AWAIT_PICKUP, S_DONE, S_WITHDRAWN,
 )
+
+# 提交人可以自己撤回的状态（还没出纸之前）；打印中/已打印都不允许
+USER_WITHDRAWABLE = (S_PENDING, S_APPROVED)
+
+# 管理员「重新打印」允许的起始状态（再打一份：重新入队等代理领取）
+ADMIN_REPRINTABLE = (S_PRINTED, S_FAILED, S_AWAIT_DELIVERY, S_AWAIT_PICKUP, S_DONE)
 
 # ── 配送方式（用户在提交页选，默认取用户配置里的 default_delivery）──
 DELIVER = "配送"      # 打印好后要送到配送地址

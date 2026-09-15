@@ -271,6 +271,18 @@ export const api = {
     return data.job
   },
 
+  /** 提交人撤回自己的任务（仅待审核 / 已通过，即尚未出纸） */
+  async withdrawJob(id: number): Promise<Job> {
+    const data = await request<{ job: Job }>(`/api/jobs/${id}/withdraw`, { method: 'POST' })
+    return data.job
+  },
+
+  /** 管理员重新打印：把已出纸/已结束的任务重新入队（清掉上次打印痕迹） */
+  async reprintJob(id: number): Promise<Job> {
+    const data = await request<{ job: Job }>(`/api/jobs/${id}/reprint`, { method: 'POST' })
+    return data.job
+  },
+
   /** 管理员交接流转：已打印 → 待配送/待取件 → 已完成（后端校验配送方式是否匹配） */
   async advance(id: number, to: JobStatus): Promise<Job> {
     const data = await request<{ job: Job }>(`/api/jobs/${id}/advance`, { method: 'POST', body: { to } })

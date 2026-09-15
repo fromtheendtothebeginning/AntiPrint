@@ -1062,6 +1062,41 @@ def retry(job_id: int, user: dict = Depends(auth.require_admin)):
     return {"job": _job_payload(db.get_job(job_id))}
 
 
+@app.post("/api/jobs/{job_id}/withdraw")
+def withdraw(job_id: int, user: dict = Depends(auth.get_current_user)):
+    """提交人撤回自己的任务：仅「待审核 / 已通过」（还没出纸）可撤回，撤回到「已撤回」。"""
+    job = _load_job_for(job_id, user)
+    if user["role"] not in ("admin", "root") and job["user_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="只能撤回自己的任务")
+    if job["status"] not in constants.USER_WITHDRAWABLE:
+        raise HTTPException(status_code=400, detail=f"当前状态「{job['status']}」不能撤回（已开始打印或已结束）")
+    ok = db.set_status(
+        job_id, constants.S_WITHDRAWN, user["username"],
+        remark="提交人撤回任务", from_status=job["status"],
+    )
+    if not ok:
+        raise HTTPException(status_code=409, detail="任务状态已变化（可能已被打印代理领取），请刷新后重试")
+    logger.info("用户 %s 撤回任务 #%s", user["username"], job_id)
+    return {"job": _job_payload(db.get_job(job_id))}
+
+
+@app.post("/api/jobs/{job_id}/reprint")
+def reprint(job_id: int, user: dict = Depends(auth.require_admin)):
+    """管理员「重新打印」：把已出纸/已结束的任务重新入队（回到「已通过」），清掉上次的打印痕迹。"""
+    job = _load_job_for(job_id, user)
+    if job["status"] not in constants.ADMIN_REPRINTABLE:
+        raise HTTPException(status_code=400, detail=f"当前状态「{job['status']}」不能重新打印")
+    ok = db.set_status(
+        job_id, constants.S_APPROVED, user["username"],
+        remark="管理员重新打印", from_status=job["status"],
+        print_error=None, printed_at=None, finished_at=None, agent_id=None,
+    )
+    if not ok:
+        raise HTTPException(status_code=409, detail="任务状态已变化，请刷新后重试")
+    logger.info("管理员 %s 重新打印任务 #%s", user["username"], job_id)
+    return {"job": _job_payload(db.get_job(job_id))}
+
+
 @app.post("/api/jobs/{job_id}/advance")
 def advance(job_id: int, body: AdvanceBody, user: dict = Depends(auth.require_admin)):
     """打印完成后的交接流转（管理员在任务队列里勾选）：

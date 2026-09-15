@@ -2,7 +2,7 @@
 // 结构自 AdminPage 的队列部分迁出并增强（状态筛选 + 配送方式 + 交接勾选）；
 // 表现层为 Tailwind CSS v4 暖色仪表盘风格（配方见 AGENTS.md「前端约定」），图标统一 lucide-react
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertTriangle, Check, Eye, Inbox, Loader2, RefreshCw, X } from 'lucide-react'
+import { AlertTriangle, Check, Eye, Inbox, Loader2, RefreshCw, RotateCcw, Trash2, X } from 'lucide-react'
 import { api, getErrorMessage } from '../api'
 import { formatSize } from '../components/FileChips'
 import Modal from '../components/Modal'
@@ -75,6 +75,9 @@ const CHIP_ALL_ACTIVE = `${BADGE_BASE} bg-brand/10 text-brand-dark dark:text-bra
 const CHECK_LABEL =
   'mt-2 inline-flex items-center gap-2 rounded-xl bg-warm px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors dark:bg-white/5 dark:text-gray-300'
 
+/** 可「重新打印」的状态（与后端 constants.ADMIN_REPRINTABLE 一致）；打印失败另有「重新入队」 */
+const REPRINTABLE: JobStatus[] = [STATUS_PRINTED, STATUS_AWAIT_DELIVERY, STATUS_AWAIT_PICKUP, STATUS_DONE]
+
 /** 配送方式徽章配色：配送=主色系（青绿）、取件=紫罗兰色系 */
 const MODE_BADGE: Record<DeliveryMode, string> = {
   [DELIVER]: `${BADGE_BASE} bg-brand/10 text-brand-dark dark:text-brand`,
@@ -117,6 +120,8 @@ function QueuePage() {
   const [filter, setFilter] = useState<StatusFilter>(FILTER_ALL)
 
   // 驳回弹窗
+  /** 删除确认弹窗的目标任务 */
+  const [deleteJob, setDeleteJob] = useState<Job | null>(null)
   const [rejectJob, setRejectJob] = useState<Job | null>(null)
   const [rejectReason, setRejectReason] = useState('')
   const [rejectError, setRejectError] = useState('')
@@ -193,6 +198,30 @@ function QueuePage() {
 
   async function handleApprove(job: Job) {
     await runAction(job.id, () => api.approve(job.id), `任务 #${job.id} 已同意，等待打印代理出纸`)
+  }
+
+  /** 管理员重新打印：把已出纸/已结束的任务重新入队（清掉上次打印痕迹） */
+  async function handleReprint(job: Job) {
+    await runAction(job.id, () => api.reprintJob(job.id), `任务 #${job.id} 已重新入队打印`)
+  }
+
+  /** 管理员删除任务（含上传文件，弹窗二次确认） */
+  async function handleDelete() {
+    if (!deleteJob) return
+    const id = deleteJob.id
+    setActingId(id)
+    try {
+      await api.deleteJob(id)
+      setDeleteJob(null)
+      setNotice(`任务 #${id} 已删除`)
+      await loadQueue()
+    } catch (err) {
+      setError(getErrorMessage(err))
+      setDeleteJob(null)
+      await loadQueue()
+    } finally {
+      setActingId(0)
+    }
   }
 
   async function handleRetry(job: Job) {
@@ -473,6 +502,27 @@ function QueuePage() {
                               重新入队
                             </button>
                           )}
+                          {/* 重新打印：已出纸/已结束的任务再打一份（后端只在这些状态下放行） */}
+                          {REPRINTABLE.includes(job.status) && (
+                            <button
+                              type="button"
+                              className={BTN_SM_SECONDARY}
+                              disabled={rowBusy}
+                              onClick={() => void handleReprint(job)}
+                            >
+                              <RotateCcw className="h-3.5 w-3.5" />
+                              重新打印
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 rounded-lg bg-clay/10 px-2.5 py-1.5 text-xs font-medium text-clay transition-colors hover:bg-clay/20 disabled:cursor-not-allowed disabled:opacity-60"
+                            disabled={rowBusy}
+                            onClick={() => setDeleteJob(job)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            删除
+                          </button>
                         </div>
                         {/* 交接勾选：始终可见（不随悬浮隐藏），便于操作与自动化定位 */}
                         {target && (
@@ -504,6 +554,35 @@ function QueuePage() {
       </section>
 
       {/* 驳回弹窗 */}
+      {/* 删除确认（不可恢复：连上传文件一起删） */}
+      <Modal
+        open={deleteJob !== null}
+        title={deleteJob ? `删除任务 #${deleteJob.id}` : '删除任务'}
+        onClose={() => setDeleteJob(null)}
+        danger
+        size="sm"
+        footer={
+          <>
+            <button type="button" className={BTN_SM_SECONDARY} onClick={() => setDeleteJob(null)}>
+              取消
+            </button>
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-clay px-4 py-2 text-sm font-medium text-white shadow-lg shadow-clay/25 transition-all duration-200 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={actingId === (deleteJob?.id ?? 0)}
+              onClick={() => void handleDelete()}
+            >
+              {actingId === (deleteJob?.id ?? 0) ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              确认删除
+            </button>
+          </>
+        }
+      >
+        <p className="text-sm text-gray-600 dark:text-gray-300">
+          删除后任务记录与上传文件都会消失，<strong>不可恢复</strong>；如果只是想再打一份，请用「重新打印」。
+        </p>
+      </Modal>
+
       <Modal
         open={rejectJob !== null}
         title={rejectJob ? `驳回任务 #${rejectJob.id}` : '驳回任务'}

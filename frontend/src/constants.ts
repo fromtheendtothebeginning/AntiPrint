@@ -11,6 +11,7 @@ export const STATUS_FAILED: JobStatus = '打印失败'
 export const STATUS_AWAIT_DELIVERY: JobStatus = '待配送'
 export const STATUS_AWAIT_PICKUP: JobStatus = '待取件'
 export const STATUS_DONE: JobStatus = '已完成'
+export const STATUS_WITHDRAWN: JobStatus = '已撤回'
 
 /** 配送方式（与 backend/constants.py 同步） */
 export const DELIVER = '配送'
@@ -32,6 +33,7 @@ const STATUS_BADGE_CLASS: Record<JobStatus, string> = {
   [STATUS_AWAIT_DELIVERY]: 'bg-sky-500/10 text-sky-600 dark:text-sky-400',
   [STATUS_AWAIT_PICKUP]: 'bg-violet-500/10 text-violet-600 dark:text-violet-400',
   [STATUS_DONE]: 'bg-gray-200/70 text-gray-600 dark:bg-white/10 dark:text-gray-300',
+  [STATUS_WITHDRAWN]: 'bg-gray-100 text-gray-500 dark:bg-white/5 dark:text-gray-400',
 }
 
 /** 返回状态徽章使用的 Tailwind 类名；未知状态退回灰底，避免样式丢失 */

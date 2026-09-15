@@ -1,11 +1,11 @@
 {
   "server": "http://127.0.0.1:8301",
-  "agent_token": "在服务端管理页复制后粘贴到这里",
-  "name": "print-agent-1",
+  "agent_token": "在服务端「管理设置 → 代理令牌」复制后粘贴到这里",
+  "name": "",
   "launcher": "sumatra",
-  "printer_name": "HP LaserJet Professional P1106",
+  "printer_name": "default",
   "copies": 1,
   "dry_run": false,
   "poll_interval": 5,
-  "sumatra_path": "C:\\Users\\86133\\AppData\\Local\\SumatraPDF\\SumatraPDF.exe"
+  "sumatra_path": ""
 }
