@@ -95,7 +95,7 @@ anticraft 账号绑定：`GET /api/oauth/anticraft/status`（是否已配置）�
 
 ## 约定与注意事项
 
-- 上传仅支持 **PDF / 图片（png、jpg）**：单文件 ≤10MB、单任务 ≤5 个；危险扩展名（exe/bat/js/html…）一律拒绝。Office 文档需先转 PDF（见 AGENTS.md「已知未定义」）。
+- 上传支持 **PDF / 图片（png、jpg）/ Word / PPT（docx、doc、pptx、ppt）**：单文件 ≤10MB、单任务 ≤5 个；危险扩展名（exe/bat/js/html/含宏的 docm…）一律拒绝。**Word 与 PPT 会在服务端先转成 PDF**（预览、打印都用转换结果），转换失败会直接提示而不入库。生产服务器需要装 LibreOffice（`apt-get install -y --no-install-recommends libreoffice-writer libreoffice-impress`）；Windows 装了 Microsoft Office 也能转。
 - 中文界面/注释/文档；样式沿用 `D:\anticraft\index` 的设计体系（紫 `#6c5ce7` / 青 `#00cec9`，明暗模式），图标全部内联 SVG。
 - 端口：后端 **8301**、前端 dev **3010**（本机 3000/8000 被 `index` 占用，**8300 被 natpierce 占用**）。
 - pip 若报「找不到 fastapi」是清华源对新 Python 返回空，改用 `-i https://mirrors.aliyun.com/pypi/simple/`（setup.bat 已内置）。

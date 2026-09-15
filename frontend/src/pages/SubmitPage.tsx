@@ -32,13 +32,20 @@ import {
   PICKUP,
   SCALE_OPTIONS,
   describePrintOptions,
+  isOfficeFile,
+  previewKind,
   statusBadge,
 } from '../constants'
 import type { DeliveryMode, Job, PrintOptions } from '../types/api'
 
 const MAX_FILES = 5
 const MAX_FILE_SIZE = 10 * 1024 * 1024
-const ACCEPT = 'application/pdf,image/png,image/jpeg'
+const ACCEPT =
+  'application/pdf,image/png,image/jpeg,' +
+  '.doc,.docx,.ppt,.pptx,application/msword,' +
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document,' +
+  'application/vnd.ms-powerpoint,' +
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation'
 /** 配送方式选项：取值就是后端 delivery_mode 的字面量 */
 const MODE_OPTIONS: DeliveryMode[] = [DELIVER, PICKUP]
 
@@ -105,12 +112,9 @@ function nupCount(nup: string): number {
   return rows * cols
 }
 
-/** 按扩展名决定内嵌预览方式 */
+/** 按扩展名决定内嵌预览方式（Word/PPT 由服务端转 PDF 后就按 PDF 预览） */
 function fileKind(name: string): 'pdf' | 'image' | 'other' {
-  const lower = name.toLowerCase()
-  if (lower.endsWith('.pdf')) return 'pdf'
-  if (/\.(png|jpe?g|gif|webp|bmp)$/.test(lower)) return 'image'
-  return 'other'
+  return previewKind(name)
 }
 
 function SubmitPage() {
@@ -131,6 +135,12 @@ function SubmitPage() {
   const touchedRef = useRef(false)
   /** 当前选中文件的本地预览地址（本页负责创建与回收） */
   const [previewUrl, setPreviewUrl] = useState('')
+  /** 当前选中的 Word/PPT 在服务端转成 PDF 后的预览地址（非 Office 文件为空） */
+  const [officePreviewUrl, setOfficePreviewUrl] = useState('')
+  const [officeConverting, setOfficeConverting] = useState(false)
+  const [officeError, setOfficeError] = useState('')
+  /** Office 预览请求序号：快速切换文件时丢弃过期响应 */
+  const officeSeqRef = useRef(0)
 
   // 进入页面读取「我的配置」的默认配送方式与默认地址；读取失败静默忽略，不阻断提交
   useEffect(() => {
@@ -176,6 +186,37 @@ function SubmitPage() {
     setPreviewUrl(url)
     return () => URL.revokeObjectURL(url)
   }, [selectedFile])
+
+  // Word/PPT：提交前先让服务端转成 PDF 再预览（结果按内容缓存，正式提交时命中同一份，不再转第二次）
+  useEffect(() => {
+    const seq = officeSeqRef.current + 1
+    officeSeqRef.current = seq
+    setOfficePreviewUrl('')
+    setOfficeError('')
+    if (!selectedFile || !isOfficeFile(selectedFile.name)) {
+      setOfficeConverting(false)
+      return
+    }
+    setOfficeConverting(true)
+    api
+      .convertOfficePreview(selectedFile)
+      .then((blob) => {
+        if (officeSeqRef.current !== seq) return
+        setOfficePreviewUrl(URL.createObjectURL(blob))
+        setOfficeConverting(false)
+      })
+      .catch((err) => {
+        if (officeSeqRef.current !== seq) return
+        setOfficeError(getErrorMessage(err))
+        setOfficeConverting(false)
+      })
+  }, [selectedFile])
+
+  // Office 转换出的临时地址：切换文件 / 卸载时回收
+  useEffect(() => {
+    if (!officePreviewUrl) return
+    return () => URL.revokeObjectURL(officePreviewUrl)
+  }, [officePreviewUrl])
 
   /** 取件时不要求地址，输入框改成地点备注 */
   const isPickup = mode === PICKUP
@@ -507,7 +548,7 @@ function SubmitPage() {
           accept={ACCEPT}
           multiple
           hideChips
-          hint="支持 PDF / 图片，单文件 ≤10MB，最多 5 个"
+          hint="支持 PDF / 图片 / Word / PPT，单文件 ≤10MB，最多 5 个（Word/PPT 会先转成 PDF）"
         />
 
         {picked.length > 0 && (
@@ -685,7 +726,8 @@ function SubmitPage() {
               <p className="flex items-center gap-1.5 text-xs text-gray-400">
                 <Eye className="h-3.5 w-3.5 shrink-0" />
                 <span>
-                  预览：{selectedFile.name} · 第 {startPage} 页 ·{' '}
+                  预览：{selectedFile.name}
+                  {officePreviewUrl ? '（Word/PPT 已转 PDF）' : ''} · 第 {startPage} 页 ·{' '}
                   {describePrintOptions(options, options.copies)}
                 </span>
               </p>
@@ -705,17 +747,26 @@ function SubmitPage() {
               id="file-preview"
               className="h-[300px] w-full overflow-hidden rounded-xl border border-gray-200 bg-white sm:h-[480px] dark:border-white/10 dark:bg-ink"
             >
-              {previewUrl && kind === 'pdf' && (
+              {officeConverting && (
+                <p className="flex h-full items-center justify-center gap-2 px-4 text-sm text-gray-400">
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                  正在把 Word/PPT 转成 PDF…
+                </p>
+              )}
+              {!officeConverting && officeError && (
+                <p className="px-4 py-8 text-center text-sm text-clay">{officeError}</p>
+              )}
+              {!officeConverting && !officeError && (officePreviewUrl || previewUrl) && kind === 'pdf' && (
                 <iframe
                   className="h-full w-full"
-                  src={`${previewUrl}#page=${startPage}`}
+                  src={`${officePreviewUrl || previewUrl}#page=${startPage}`}
                   title={selectedFile.name}
                 />
               )}
-              {previewUrl && kind === 'image' && (
+              {!officeConverting && !officeError && !officePreviewUrl && previewUrl && kind === 'image' && (
                 <img className="mx-auto max-h-[300px] sm:max-h-[480px]" src={previewUrl} alt={selectedFile.name} />
               )}
-              {previewUrl && kind === 'other' && (
+              {!officeConverting && !officeError && !officePreviewUrl && previewUrl && kind === 'other' && (
                 <p className="px-4 py-8 text-center text-xs text-gray-400">该文件类型不支持内嵌预览</p>
               )}
             </div>

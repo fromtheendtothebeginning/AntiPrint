@@ -362,4 +362,13 @@ export const api = {
     if (!res.ok) throw new Error(await readError(res))
     return res.blob()
   },
+
+  /** 提交前预览 Word/PPT：服务端转成 PDF 返回（结果按内容缓存，提交时命中同一份） */
+  async convertOfficePreview(file: File): Promise<Blob> {
+    const form = new FormData()
+    form.append('file', file, file.name)
+    const res = await rawRequest('/api/preview/office', { method: 'POST', body: form })
+    if (!res.ok) throw new Error(await readError(res))
+    return res.blob()
+  },
 }

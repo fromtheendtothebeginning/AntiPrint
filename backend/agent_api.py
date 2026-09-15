@@ -6,6 +6,7 @@ import json
 import logging
 import mimetypes
 import os
+from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -14,6 +15,7 @@ from pydantic import BaseModel, Field
 
 import config
 import constants
+import convert
 import db
 
 logger = logging.getLogger("antiprint.agent")
@@ -83,6 +85,10 @@ def _job_payload(job):
             {
                 "id": item["id"],
                 "filename": item["filename"],
+                # Office（Word/PPT）下载到的是转换后的 PDF，代理按这个名字存盘并打印（后缀必须是 .pdf）
+                "print_name": (
+                    f"{Path(item['filename']).stem}.pdf" if convert.is_office(item["filename"]) else item["filename"]
+                ),
                 "size": item["size"],
                 "url": f"/api/agent/jobs/{job['id']}/files/{item['id']}",
                 "print_options": _parse_options(item.get("print_options")),
@@ -135,7 +141,11 @@ def claim(_: bool = Depends(require_agent)):
 
 @router.get("/jobs/{job_id}/files/{file_id}")
 def download(job_id: int, file_id: int, _: bool = Depends(require_agent)):
-    """代理下载待打印文件（一律 attachment；路径由 DB stored_name 拼接并防目录穿越）"""
+    """代理下载待打印文件（一律 attachment；路径由 DB stored_name 拼接并防目录穿越）
+
+    Office（Word/PPT）给的是**转换后的 PDF**（与 claim 里的 print_name 一致），
+    代理直接交给 SumatraPDF 打印，不需要自己转换。
+    """
     job = db.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="任务不存在")
@@ -146,8 +156,16 @@ def download(job_id: int, file_id: int, _: bool = Depends(require_agent)):
     if not path or not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="文件不存在")
     filename = row["filename"] or "file"
+    if convert.is_office(filename):
+        try:
+            pdf_path, filename = convert.pdf_for(path, filename, row.get("sha256"))
+        except convert.ConvertError as exc:
+            raise HTTPException(status_code=500, detail=f"转换失败，无法打印：{exc}")
+        path = str(pdf_path)
+        media_type = "application/pdf"
+    else:
+        media_type = mimetypes.guess_type(row["stored_name"])[0] or "application/octet-stream"
     fallback = filename.encode("ascii", "ignore").decode().replace('"', "") or "file"
-    media_type = mimetypes.guess_type(row["stored_name"])[0] or "application/octet-stream"
     headers = {
         "X-Content-Type-Options": "nosniff",
         "Content-Disposition": f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(filename)}",

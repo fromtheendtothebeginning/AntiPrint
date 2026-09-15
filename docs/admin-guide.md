@@ -63,7 +63,7 @@ printf 'someone\n<你的口令>\n' | /var/www/antiprint/backend/.venv/bin/python
 ## 1.5 提交页（两步）与打印参数
 
 **第一步：打印文件与设置**
-- 拖入或点选文件（支持 PDF / 图片，单文件 ≤10MB、最多 5 个）；
+- 拖入或点选文件（支持 PDF / 图片 / Word / PPT，单文件 ≤10MB、最多 5 个；Word/PPT 会先在服务端转成 PDF，见 §9）；
 - 下方文件列表里点某一行选中它，右侧就是**这个文件自己的打印设置**（每个文件一套，互不影响）；
 - 右侧预览**按设置显示**：填了页面范围（如 `2-3`）预览会跳到该范围起始页；每张纸页数大于 1 时会提示「打印时按 N 页/张排版，预览为单页视图」；
 - 底部「下一步：填写配送信息」。
@@ -86,7 +86,7 @@ printf 'someone\n<你的口令>\n' | /var/www/antiprint/backend/.venv/bin/python
 
 **手机端**：界面已适配手机（小屏时侧栏收成抽屉，点左上角图标滑出；表格左右滑动查看）。
 
-**预览**：第一步右侧就是内嵌预览（PDF / 图片）；提交后到「我的任务」点文件名也能预览自己上传的件；管理员在「任务队列」点文件名预览待审文件。
+**预览**：第一步右侧就是内嵌预览（PDF / 图片；Word/PPT 显示的是服务端转好的 PDF）；提交后到「我的任务」点文件名也能预览自己上传的件；管理员在「任务队列」点文件名预览待审文件。
 
 ## 2. 日常使用流程（管理员视角）
 
@@ -106,11 +106,21 @@ printf 'someone\n<你的口令>\n' | /var/www/antiprint/backend/.venv/bin/python
 
 ## 3. 部署打印代理（**只在那台接打印机的 Windows 上做，一次**）
 
+### 3.0 两种装法，先选一种
+
+| 装法 | 适合 | 怎么做 |
+|---|---|---|
+| **分发包（推荐给别的机器/别的管理员）** | 目标机器不想装 Python、不想拉整个仓库 | 在开发机跑 `bash deploy/pack-agent.sh` → 得到 `dist/AntiPrintAgent-<版本>.zip` → 整个发给对方；对方解压后依次双击 `install-agent.bat`（按提示填服务器地址、代理令牌、打印机名）→ `check-agent.bat`（自检）→ `start-agent.bat`（启动）。**包内自带 Python 运行环境**，不需另外装 Python；详细说明见包内 `README.txt` |
+| 整仓库 | 就是本机（已 clone 仓库、已建好 `backend\.venv`） | 按下面 3.1 ~ 3.5 做 |
+
+两种装法的配置文件、命令行参数完全一样，只是 Python 解释器换成了包内 `runtime\`。
+打包脚本会**校验包内没有 `config.json` 与真实代理令牌**，所以分发包可以直接发出去，收包人自己填令牌。
+
 ### 3.1 前提
 
 - Windows 电脑 + 一台**真实**打印机（本项目实测机型：`HP LaserJet Professional P1106`，USB 连接）
-- 已安装 SumatraPDF（本项目实测路径：`C:\Users\<你>\AppData\Local\SumatraPDF\SumatraPDF.exe`）
-- 已把本项目放到这台电脑上（含 `agent/` 与 `backend/.venv`）
+- 已安装 SumatraPDF（默认装到 `C:\Users\<你>\AppData\Local\SumatraPDF\`；装在别处就往 `config.json` 的 `sumatra_path` 填完整路径，留空＝自动查找）
+- 整仓库装法：已把本项目放到这台电脑上（含 `agent/` 与 `backend/.venv`）；分发包装法：只需解压分发包
 
 ### 3.2 写代理配置 `agent/config.json`
 
@@ -118,20 +128,22 @@ printf 'someone\n<你的口令>\n' | /var/www/antiprint/backend/.venv/bin/python
 {
   "server": "http://47.100.125.150",
   "agent_token": "在服务器「管理设置 → 代理令牌」复制",
-  "name": "print-agent-1",
+  "name": "",
   "launcher": "sumatra",
-  "printer_name": "HP LaserJet Professional P1106",
+  "printer_name": "default",
   "copies": 1,
   "dry_run": false,
   "poll_interval": 5,
-  "sumatra_path": "C:\\Users\\86133\\AppData\\Local\\SumatraPDF\\SumatraPDF.exe"
+  "sumatra_path": ""
 }
 ```
 
 - `server`：线上填 `http://47.100.125.150`；域名与 HTTPS 就绪后填 `https://print.anticraft.top`。
 - `agent_token`：**每套服务各自一份**（本机开发环境与线上不同，换服务器必须换令牌）。
-- `printer_name`：必须与 Windows「打印机和扫描仪」里的队列名**逐字一致**；**不要选虚拟队列**（见 §4）。
-- 配置会被服务器下发的设置覆盖（启停器/打印机/份数/演练模式以服务器为准）。
+- `name`：留空＝用本机计算机名（多台代理时不要都叫同一个名字）。
+- `printer_name`：必须与 Windows「打印机和扫描仪」里的队列名**逐字一致**；`default`＝系统默认打印机；**不要选虚拟队列**（见 §4）。
+- `sumatra_path`：留空＝自动查找（配置路径 → `%LOCALAPPDATA%\SumatraPDF` → `Program Files` → `PATH`）。
+- 配置会被服务器下发的设置覆盖（启动器/打印机/份数/演练模式以服务器为准）。
 
 ### 3.3 安装依赖并注册开机自启
 
@@ -139,7 +151,9 @@ printf 'someone\n<你的口令>\n' | /var/www/antiprint/backend/.venv/bin/python
 agent\install-agent.bat      :: 建议「以管理员身份运行」
 ```
 
-它做三件事：缺 `config.json` 时从模板复制、把依赖装进 `backend\.venv`、注册登录自启任务 `AntiPrintAgent`。
+它做三件事：缺 `config.json` 时从模板复制、准备好 Python 与依赖、注册登录自启任务 `AntiPrintAgent`。
+脚本会**依次问三个问题**（直接回车＝保留原值）：`server`（服务器地址）、`agent token`（后台「管理设置 → 代理令牌」里复制）、`printer`（打印机队列名，可留空）。
+有自带 `runtime\`（分发包）时不再装依赖；整仓库装法是把依赖装进 `backend\.venv`。
 **没有管理员权限时**：注册计划任务会被系统拒绝（`Access is denied`，实测如此），脚本会自动退回普通权限再试一次；仍失败就用启动文件夹替代：
 
 ```bat
@@ -150,12 +164,15 @@ echo start "" "D:\anticraft\AntiPrint\backend\.venv\Scripts\pythonw.exe" "D:\ant
 ### 3.4 启动并自检
 
 ```bat
-agent\start-agent.bat                                        :: 无窗口启动（pythonw）
-backend\.venv\Scripts\python.exe agent\print_agent.py --selftest   :: 自检：配置 / 打印机 / 心跳
-backend\.venv\Scripts\python.exe agent\print_agent.py --printers   :: 列出本机打印机队列
-backend\.venv\Scripts\python.exe agent\print_agent.py --once       :: 只跑一轮（调试）
-agent\stop-agent.bat                                         :: 停止
+agent\check-agent.bat     :: 自检：本机打印机队列 + 配置 + 服务端心跳 + SumatraPDF（排查时先跑它）
+agent\start-agent.bat     :: 无窗口启动（pythonw）
+agent\stop-agent.bat      :: 停止
+agent\print_agent.py --printers   :: 只列本机打印机队列
+agent\print_agent.py --once       :: 只跑一轮（调试）
 ```
+
+带上 `--printers / --selftest / --once` 这些参数，要显式用某个解释器跑：整仓库装法是
+`backend\.venv\Scripts\python.exe agent\print_agent.py --selftest`，分发包是 `runtime\python.exe print_agent.py --selftest`。
 
 自检通过后，到「管理设置」页看**打印代理在线**，然后走一遍真实出纸（§5）。
 
@@ -220,4 +237,22 @@ agent\stop-agent.bat                                         :: 停止
 - 线上现在是 **HTTP 明文**（IP 访问）：口令与代理令牌会明文过网。域名 + 证书弄好后尽快切到 HTTPS，并同步更新 `agent/config.json` 的 `server`。
 - **代理令牌**等同于「领取任务 / 下载待打印文件 / 回报结果」的钥匙，泄露后请到「管理设置 → 重置令牌」并同步更新每台代理的 `config.json`。
 - 默认账号 `admin` 的口令已随机化；如果你要重新启用它，请用 §1.2 的脚本显式设置口令。
-- 上传只允许 PDF / 图片（png、jpg），单文件 ≤10MB、单任务 ≤5 个；下载接口需要登录，只有本人或管理员能取。
+- 上传允许 PDF / 图片（png、jpg）/ Word / PPT（docx、doc、pptx、ppt），单文件 ≤10MB、单任务 ≤5 个；含宏的 docm/pptm 等危险类型一律拒绝；下载接口需要登录，只有本人或管理员能取。
+
+---
+
+## 9. Word / PPT 转 PDF（2026-09-15 新增）
+
+用户上传的 **Word / PPT 会在服务器端先转成 PDF**：提交页右侧预览、管理员预览、打印代理出纸用的都是转换后的 PDF（代理拿到的永远只有 PDF，不需要在打印那台机器上再转换）。
+
+- **线上服务器必须装 LibreOffice**（没有它 Word/PPT 会转不了，提交会明确报错）：
+  ```bash
+  apt-get update && apt-get install -y --no-install-recommends libreoffice-writer libreoffice-impress
+  # 装完重启后端：systemctl restart antiprint-api
+  soffice --version     # 能看到版本即成功
+  ```
+- 装在非默认路径时，给服务加环境变量即可：`SOFFICE_PATH=/opt/libreoffice/program/soffice`（写在 systemd 单元的 `Environment=` 里）。
+- **Windows 机器（本机开发/验收）**：装 Microsoft Office 就够（走 Office 自动化导出 PDF），也可以用 `winget install TheDocumentFoundation.LibreOffice` 装 LibreOffice —— 两者都有时**优先用 LibreOffice**。
+- 转换结果是按文件内容（sha256）缓存的：同一份文件重复提交只转一次；删除任务时若没有别的任务还在用同一份文件，缓存会一并清理（`backend/data/converted/`）。
+- 耗时参考：本机 Word 约 6 秒、PPT 约 23 秒（页面提交时会转圈等待，属正常；提交页选文件后的预览也会等几秒）。
+- **排查**：`"文件 xxx 转换失败"` 说明转换器装没装好或文件本身有问题（加密文档、损坏、纯改名的假 docx 都会失败）——先看 `backend/log/server.log` 里 `antiprint.convert` 的日志。

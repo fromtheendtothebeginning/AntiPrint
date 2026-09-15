@@ -32,6 +32,7 @@ from pydantic import BaseModel
 import auth
 import config
 import constants
+import convert
 import db
 from agent_api import router as agent_router
 
@@ -233,14 +234,27 @@ def _find_file(job: dict, file_id: int):
 
 
 def _file_response(job_id: int, file_row: dict, download: bool = False) -> FileResponse:
-    """文件响应：路径由 DB 的 stored_name 拼接并校验在 uploads/<job_id>/ 内（防目录穿越）"""
+    """文件响应：路径由 DB 的 stored_name 拼接并校验在 uploads/<job_id>/ 内（防目录穿越）
+
+    Office（Word/PPT）**预览一律给转换后的 PDF**（浏览器内嵌预览也只认 PDF/图片）；
+    `download=1` 是「下载原文件」，仍给用户上传的原始文件。
+    """
+    filename = file_row["filename"]
     path = config.upload_path(job_id, file_row["stored_name"])
     if not path or not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="文件不存在")
-    media_type = mimetypes.guess_type(file_row["stored_name"])[0] or "application/octet-stream"
+    if not download and convert.is_office(filename):
+        try:
+            pdf_path, filename = convert.pdf_for(path, filename, file_row.get("sha256"))
+        except convert.ConvertError as exc:
+            raise HTTPException(status_code=500, detail=f"无法预览：{exc}")
+        path = str(pdf_path)
+        media_type = "application/pdf"
+    else:
+        media_type = mimetypes.guess_type(file_row["stored_name"])[0] or "application/octet-stream"
     headers = {
         "X-Content-Type-Options": "nosniff",
-        "Content-Disposition": _content_disposition("attachment" if download else "inline", file_row["filename"]),
+        "Content-Disposition": _content_disposition("attachment" if download else "inline", filename),
     }
     return FileResponse(path, media_type=media_type, headers=headers)
 
@@ -898,8 +912,11 @@ def create_job(
             suffix = Path(original).suffix.lower()
             if suffix in constants.DANGEROUS_EXT:
                 raise HTTPException(status_code=400, detail=f"文件 {original} 类型不允许上传（{suffix}）")
-            if suffix not in constants.PRINTABLE_EXT:
-                raise HTTPException(status_code=400, detail="暂只支持 PDF / 图片（.pdf/.png/.jpg/.jpeg）")
+            if suffix not in constants.UPLOAD_EXT:
+                raise HTTPException(
+                    status_code=400,
+                    detail="只支持 PDF / 图片 / Word / PPT（.pdf/.png/.jpg/.jpeg/.docx/.doc/.pptx/.ppt）",
+                )
             content = b""
             size = 0
             while True:
@@ -921,6 +938,14 @@ def create_job(
             seen.add(digest)
             stored_name = f"{digest[:16]}{suffix}"
             (tmp_dir / stored_name).write_bytes(content)
+            if suffix in constants.OFFICE_EXT:
+                # Word/PPT 先转 PDF（内容寻址缓存，提交页预览过的文件这里直接命中）。
+                # 转换失败就整单 400：不然任务会一路通过审核，最后卡在代理那里打不出来。
+                try:
+                    convert.convert_to_pdf(tmp_dir / stored_name, convert.converted_path(digest))
+                except convert.ConvertError as exc:
+                    convert.drop_cached(digest)
+                    raise HTTPException(status_code=400, detail=f"文件 {original} 转换失败：{exc}")
             saved.append({
                 "filename": original,
                 "stored_name": stored_name,
@@ -985,12 +1010,41 @@ def job_detail(job_id: int, user: dict = Depends(auth.get_current_user)):
 
 @app.get("/api/jobs/{job_id}/files/{file_id}")
 def job_file(job_id: int, file_id: int, download: int = 0, user: dict = Depends(auth.get_current_user)):
-    """预览/下载（本人或管理员）：默认 inline，?download=1 强制 attachment"""
+    """预览/下载（本人或管理员）：默认 inline（Office 给转换后的 PDF），?download=1 强制 attachment 给原文件"""
     job = _load_job_for(job_id, user)
     row = _find_file(job, file_id)
     if not row:
         raise HTTPException(status_code=404, detail="文件不存在")
     return _file_response(job_id, row, download=bool(download))
+
+
+@app.post("/api/preview/office")
+async def preview_office(file: UploadFile = File(...), user: dict = Depends(auth.get_current_user)):
+    """提交页预览：把还没提交的 Word/PPT 转成 PDF 返回（内容寻址缓存，提交时命中同一份，不再转第二次）
+
+    校验口径与正式上传一致（自己的登录即可用，不落库、不建任务）。
+    """
+    original = Path(file.filename or "").name.strip()[:255] or "未命名"
+    suffix = Path(original).suffix.lower()
+    if suffix in constants.DANGEROUS_EXT:
+        raise HTTPException(status_code=400, detail=f"文件 {original} 类型不允许上传（{suffix}）")
+    if suffix not in constants.OFFICE_EXT:
+        raise HTTPException(status_code=400, detail="该接口只转换 Word / PPT（.docx/.doc/.pptx/.ppt）")
+    content = await file.read(config.MAX_FILE_SIZE + 1)     # 多读 1 字节用于判超限
+    if len(content) > config.MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail=f"文件 {original} 超过大小限制（{config.MAX_FILE_MB}MB）")
+    if not content:
+        raise HTTPException(status_code=400, detail=f"文件 {original} 内容为空")
+    try:
+        pdf_path, _ = convert.convert_bytes(content, original)
+    except convert.ConvertError as exc:
+        raise HTTPException(status_code=400, detail=f"文件 {original} 转换失败：{exc}")
+    logger.info("用户 %s 预览转换：%s → %s", user["username"], original, pdf_path.name)
+    headers = {
+        "X-Content-Type-Options": "nosniff",
+        "Content-Disposition": _content_disposition("inline", f"{Path(original).stem}.pdf"),
+    }
+    return FileResponse(str(pdf_path), media_type="application/pdf", headers=headers)
 
 
 # ── 任务：审核与流转（每次流转都写 print_jobs_logs）──
@@ -1131,10 +1185,14 @@ def advance(job_id: int, body: AdvanceBody, user: dict = Depends(auth.require_ad
 
 @app.delete("/api/jobs/{job_id}")
 def delete_job(job_id: int, user: dict = Depends(auth.require_admin)):
-    """删除任务及其上传文件目录（管理员）"""
-    _load_job_for(job_id, user)
+    """删除任务及其上传文件目录（管理员）；Office 转换缓存没别的任务引用时一起清掉"""
+    job = _load_job_for(job_id, user)
     db.delete_job(job_id)
     shutil.rmtree(config.UPLOAD_DIR / str(job_id), ignore_errors=True)
+    for item in job.get("files", []):
+        digest = item.get("sha256")
+        if digest and not db.sha256_in_use(digest):
+            convert.drop_cached(digest)
     logger.info("管理员 %s 删除任务 #%s", user["username"], job_id)
     return {"ok": True}
 

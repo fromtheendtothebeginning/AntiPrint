@@ -499,6 +499,14 @@ def delete_job(job_id):
         cur.execute("DELETE FROM print_jobs_logs WHERE job_id=%s", (job_id,))
 
 
+def sha256_in_use(sha256):
+    """该内容是否还有别的文件记录在用（删任务时决定要不要清掉转换缓存）"""
+    with tx() as cur:
+        cur.execute("SELECT COUNT(*) AS n FROM print_job_files WHERE sha256=%s", (sha256,))
+        row = cur.fetchone()
+    return bool(row and row["n"])
+
+
 # ── agents ──
 
 def _row_agent(row):

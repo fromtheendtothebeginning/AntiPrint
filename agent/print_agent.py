@@ -430,9 +430,13 @@ class PrintAgent:
         return job if isinstance(job, dict) and job.get("id") is not None else None
 
     def download_file(self, job_id, file_info: dict) -> Path:
-        """下载任务文件到 agent/tmp/<job_id>/<filename>；同名文件直接覆盖。"""
+        """下载任务文件到 agent/tmp/<job_id>/<filename>；同名文件直接覆盖。
+
+        Office（Word/PPT）服务端下发的是转换后的 PDF，落盘名取 print_name（后缀 .pdf）——
+        否则 SumatraPDF 会按 .docx/.pptx 后缀拒绝打印。
+        """
         file_id = file_info.get("id")
-        raw_name = str(file_info.get("filename") or "").replace("\\", "/")
+        raw_name = str(file_info.get("print_name") or file_info.get("filename") or "").replace("\\", "/")
         filename = os.path.basename(raw_name) or "file_%s" % file_id
         dest_dir = TMP_DIR / str(job_id)
         dest_dir.mkdir(parents=True, exist_ok=True)

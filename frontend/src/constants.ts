@@ -18,6 +18,26 @@ export const DELIVER = '配送'
 export const PICKUP = '取件'
 export type DeliveryMode = typeof DELIVER | typeof PICKUP
 
+/** 需先转 PDF 的 Office 类型（与 backend/constants.py 的 OFFICE_EXT 同步）：服务端转换后再预览/打印 */
+const OFFICE_RE = /\.(docx?|pptx?)$/i
+
+/** 是否是 Word / PPT 文件（预览与提交时要在服务端先转 PDF） */
+export function isOfficeFile(filename: string): boolean {
+  return OFFICE_RE.test(filename || '')
+}
+
+/**
+ * 预览方式：PDF / 图片 / 其它。
+ * Office（Word/PPT）由服务端转成 PDF 后下发，因此一律按 PDF 预览；
+ * 提交页对未上传的 Office 文件也按 PDF 处理（预览地址来自 /api/preview/office）。
+ */
+export function previewKind(filename: string): 'pdf' | 'image' | 'other' {
+  const lower = (filename || '').toLowerCase()
+  if (lower.endsWith('.pdf') || OFFICE_RE.test(lower)) return 'pdf'
+  if (/\.(png|jpe?g|gif|webp|bmp)$/.test(lower)) return 'image'
+  return 'other'
+}
+
 /** 徽章基础样式：同色 10% 底 + 本色字（配合下方配色，全站统一） */
 export const BADGE_BASE =
   'inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium'

@@ -21,6 +21,7 @@ import {
   STATUS_PRINTING,
   STATUS_REJECTED,
   formatTime,
+  previewKind,
   statusBadge,
 } from '../constants'
 import type { DeliveryMode, Job, JobFile, JobStatus } from '../types/api'
@@ -47,17 +48,12 @@ const FILTERS: StatusFilter[] = [
 /* ---------- 样式配方（照 AGENTS.md「前端约定」，保证与全站一致） ---------- */
 const CARD = 'rounded-2xl bg-white p-6 shadow-xl shadow-black/[0.04] dark:bg-ink-soft'
 const TH = 'whitespace-nowrap px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-400'
-const TD = 'px-4 py-3 align-top text-sm text-gray-600 dark:text-gray-300'
-/** 任务号单元格：等宽字体强调 */
-const TD_ID = 'whitespace-nowrap px-4 py-3 align-top font-mono text-xs font-medium text-gray-700 dark:text-gray-200'
-/** 大字号/灰色易冲突的单元格单独成串，避免同组 Tailwind 工具类互相覆盖 */
-const TD_MUTED = 'whitespace-nowrap px-4 py-3 align-top text-xs text-gray-400'
+const TD = 'px-4 py-2.5 align-middle text-sm text-gray-600 dark:text-gray-300'
+const TD_NOWRAP = `${TD} whitespace-nowrap`
 const BTN_SM_PRIMARY =
   'inline-flex items-center gap-1 rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-white shadow-lg shadow-brand/25 transition-all duration-200 hover:-translate-y-0.5 hover:bg-brand-dark disabled:cursor-not-allowed disabled:opacity-60'
 const BTN_SM_SECONDARY =
   'inline-flex items-center gap-1 rounded-lg bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-sm shadow-black/5 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white/5 dark:text-gray-300'
-const BTN_SM_DANGER =
-  'inline-flex items-center gap-1 rounded-lg bg-clay px-3 py-1.5 text-xs font-medium text-white shadow-lg shadow-clay/25 transition-all duration-200 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60'
 const BTN_SECONDARY =
   'inline-flex items-center gap-1.5 rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-gray-600 shadow-lg shadow-black/5 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white/5 dark:text-gray-300'
 const BTN_DANGER =
@@ -73,7 +69,18 @@ const CHIP_MUTED = `${BADGE_BASE} cursor-pointer bg-gray-100 text-gray-500 trans
 const CHIP_ALL_ACTIVE = `${BADGE_BASE} bg-brand/10 text-brand-dark dark:text-brand`
 /** 交接勾选：label 包 input，可见文字供 Playwright / 无障碍按文本定位 */
 const CHECK_LABEL =
-  'mt-2 inline-flex items-center gap-2 rounded-xl bg-warm px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors dark:bg-white/5 dark:text-gray-300'
+  'inline-flex items-center gap-2 rounded-xl bg-warm px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors dark:bg-white/5 dark:text-gray-300'
+
+/** 把过长的驳回理由/打印错误截断成一行（完整内容放 title 悬停看） */
+const shorten = (text: string, limit: number) =>
+  text.length > limit ? `${text.slice(0, limit)}…` : text
+
+/** 行内紧凑时间：2026/09/15 12:43:32 → 09/15 12:43（完整值放 title；解析失败原样返回） */
+function shortTime(value: string | null): string {
+  const full = formatTime(value)
+  const matched = full.match(/^\d{4}\/(\d{2}\/\d{2})\s+(\d{2}:\d{2})/)
+  return matched ? `${matched[1]} ${matched[2]}` : full
+}
 
 /** 可「重新打印」的状态（与后端 constants.ADMIN_REPRINTABLE 一致）；打印失败另有「重新入队」 */
 const REPRINTABLE: JobStatus[] = [STATUS_PRINTED, STATUS_AWAIT_DELIVERY, STATUS_AWAIT_PICKUP, STATUS_DONE]
@@ -84,12 +91,9 @@ const MODE_BADGE: Record<DeliveryMode, string> = {
   [PICKUP]: `${BADGE_BASE} bg-violet-500/10 text-violet-600 dark:text-violet-400`,
 }
 
-/** 按扩展名决定预览方式：PDF 用 iframe、图片用 img、其余提示下载 */
+/** 按扩展名决定预览方式：PDF / 图片 / 其它（Word/PPT 由服务端转成 PDF，走 PDF 分支） */
 function fileKind(filename: string): 'pdf' | 'image' | 'other' {
-  const ext = filename.toLowerCase().split('.').pop() ?? ''
-  if (ext === 'pdf') return 'pdf'
-  if (['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'].includes(ext)) return 'image'
-  return 'other'
+  return previewKind(filename)
 }
 
 /** 交接勾选的目标状态：已打印按配送方式给「待配送 / 待取件」，待配送/待取件给「已完成」，其余无勾选项 */
@@ -381,17 +385,23 @@ function QueuePage() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[960px]">
+            {/* 固定列宽（table-fixed）：除「文件与设置」吃剩余宽度外都是定宽，
+                配合各列的 truncate 保证数据行永远单行；只有收货地址列允许换行。
+                列宽按各列内容的下限取（任务 210 / 地址 220 / 状态 195 / 操作 285） */}
+            <table className="w-full min-w-[1210px] table-fixed">
+              <colgroup>
+                <col className="w-[210px]" />
+                <col />
+                <col className="w-[220px]" />
+                <col className="w-[195px]" />
+                <col className="w-[285px]" />
+              </colgroup>
               <thead>
                 <tr className="border-b border-gray-100 dark:border-white/10">
-                  <th className={TH}>任务号</th>
-                  <th className={TH}>提交人</th>
-                  <th className={TH}>文件</th>
-                  <th className={TH}>配送方式</th>
-                  <th className={TH}>打印设置</th>
-                  <th className={TH}>配送地址</th>
+                  <th className={TH}>任务</th>
+                  <th className={TH}>文件与设置</th>
+                  <th className={TH}>配送方式与地址</th>
                   <th className={TH}>状态</th>
-                  <th className={TH}>提交时间</th>
                   <th className={TH}>操作</th>
                 </tr>
               </thead>
@@ -399,76 +409,104 @@ function QueuePage() {
                 {visibleJobs.map((job) => {
                   const target = handoverTarget(job)
                   const rowBusy = actingId === job.id
+                  const reason =
+                    job.status === STATUS_REJECTED
+                      ? job.reject_reason
+                      : job.status === STATUS_FAILED
+                        ? job.print_error
+                        : ''
                   return (
                     <tr
                       key={job.id}
                       className="group border-b border-gray-50 transition-colors last:border-0 hover:bg-warm dark:border-white/5 dark:hover:bg-white/5"
                     >
-                      <td className={TD_ID}>#{job.id}</td>
-                      <td className={`${TD} whitespace-nowrap`}>{job.username || `用户 #${job.user_id}`}</td>
-                      <td className={TD}>
+                      {/* 任务号 + 提交人 + 提交时间：压在一行（提交人过长省略，完整值悬停看） */}
+                      <td className={TD_NOWRAP}>
+                        <div className="flex items-center gap-2">
+                          <span className="shrink-0 font-mono text-xs font-semibold text-gray-700 dark:text-gray-200">
+                            #{job.id}
+                          </span>
+                          <span
+                            className="min-w-0 flex-1 truncate text-gray-700 dark:text-gray-200"
+                            title={job.username || ''}
+                          >
+                            {job.username || `用户 #${job.user_id}`}
+                          </span>
+                          <span className="shrink-0 text-xs text-gray-400" title={formatTime(job.created_at)}>
+                            {shortTime(job.created_at)}
+                          </span>
+                        </div>
+                      </td>
+
+                      {/* 文件 + 该文件自己的打印设置：平铺一行（多文件并列，超出部分省略号） */}
+                      <td className={TD_NOWRAP}>
                         {job.files.length === 0 ? (
                           <span className="text-xs text-gray-400">无文件</span>
                         ) : (
-                          <ul className="space-y-1">
-                            {job.files.map((file) => (
-                              <li key={file.id}>
-                                <button
-                                  type="button"
-                                  className="inline-flex max-w-[240px] items-center gap-1.5 text-left text-xs font-medium text-brand underline-offset-2 hover:underline"
-                                  title="点击预览"
-                                  onClick={() => void openPreview(job, file)}
-                                >
-                                  <Eye className="h-3.5 w-3.5 shrink-0" />
-                                  <span className="truncate">{file.filename}</span>
-                                </button>
-                                <span className="ml-1 text-xs text-gray-400">{formatSize(file.size)}</span>
-                              </li>
-                            ))}
-                          </ul>
+                          <div className="flex items-center gap-x-3">
+                            {job.files.map((file) => {
+                              const summary = describePrintOptions(
+                                file.print_options ?? job.print_options,
+                                file.print_options?.copies ?? job.copies,
+                              )
+                              return (
+                                <span key={file.id} className="inline-flex min-w-0 max-w-[320px] items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    className="inline-flex min-w-0 items-center gap-1 text-xs font-medium text-brand underline-offset-2 hover:underline"
+                                    title={`点击预览：${file.filename}`}
+                                    onClick={() => void openPreview(job, file)}
+                                  >
+                                    <Eye className="h-3.5 w-3.5 shrink-0" />
+                                    <span className="truncate">{file.filename}</span>
+                                  </button>
+                                  <span className="shrink-0 text-xs text-gray-400">{formatSize(file.size)}</span>
+                                  {summary !== '驱动默认' && (
+                                    <span className="min-w-0 truncate text-xs text-gray-400" title={summary}>
+                                      · {summary}
+                                    </span>
+                                  )}
+                                </span>
+                              )
+                            })}
+                          </div>
                         )}
                       </td>
+
+                      {/* 配送方式 + 地址：方式用徽章，地址是唯一允许换行的内容（长地址最多两三行） */}
                       <td className={TD}>
-                        <span className={MODE_BADGE[job.delivery_mode]}>{job.delivery_mode}</span>
-                      </td>
-                      <td className={`${TD} max-w-[180px] text-xs text-gray-500 dark:text-gray-400`}>
-                        {describePrintOptions(job.print_options, job.copies)}
-                      </td>
-                      <td className={`${TD} max-w-[240px] break-words`}>
-                        {job.address.trim() ? (
-                          job.address
-                        ) : (
-                          <span className="text-xs text-gray-400">
-                            {job.delivery_mode === PICKUP ? '自取（未填地址）' : '未填地址'}
+                        <div className="flex items-start gap-2">
+                          <span className={`${MODE_BADGE[job.delivery_mode]} shrink-0`}>{job.delivery_mode}</span>
+                          <span className="min-w-0 flex-1 break-words text-sm text-gray-700 dark:text-gray-200">
+                            {job.address.trim() ? (
+                              job.address
+                            ) : (
+                              <span className="text-xs text-gray-400">
+                                {job.delivery_mode === PICKUP ? '自取（未填地址）' : '未填地址'}
+                              </span>
+                            )}
                           </span>
-                        )}
+                        </div>
                       </td>
-                      <td className={TD}>
-                        <span className={statusBadge(job.status)}>{job.status}</span>
-                        {job.status === STATUS_REJECTED && job.reject_reason && (
-                          <p className="mt-1.5 text-xs text-red-600 dark:text-red-400">
-                            理由：{job.reject_reason}
-                          </p>
-                        )}
-                        {job.status === STATUS_FAILED && job.print_error && (
-                          <p className="mt-1.5 text-xs text-red-600 dark:text-red-400">
-                            错误：{job.print_error}
-                          </p>
-                        )}
+
+                      {/* 状态：徽章 + 驳回理由/打印错误（截断成一行，完整内容悬停可见） */}
+                      <td className={TD_NOWRAP}>
+                        <div className="flex items-center gap-2">
+                          <span className={`${statusBadge(job.status)} shrink-0`}>{job.status}</span>
+                          {reason && (
+                            <span
+                              className="min-w-0 truncate text-xs text-red-600 dark:text-red-400"
+                              title={`${job.status === STATUS_REJECTED ? '理由' : '错误'}：${reason}`}
+                            >
+                              {shorten(reason, 8)}
+                            </span>
+                          )}
+                        </div>
                       </td>
-                      <td className={TD_MUTED}>{formatTime(job.created_at)}</td>
+
+                      {/* 操作：全部挤在一行不换行（预览走左侧文件名） */}
                       <td className={TD}>
-                        {/* 悬浮显示操作按钮：focus-within 保证键盘与自动化点击时也可见可点 */}
-                        <div className="flex flex-wrap items-center gap-2 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
-                          <button
-                            type="button"
-                            className={BTN_SM_SECONDARY}
-                            disabled={job.files.length === 0}
-                            onClick={() => void openPreview(job, job.files[0])}
-                          >
-                            <Eye className="h-3.5 w-3.5" />
-                            预览
-                          </button>
+                        <div className="flex items-center gap-1.5 whitespace-nowrap opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
                           {job.status === STATUS_PENDING && (
                             <>
                               <button
@@ -482,7 +520,7 @@ function QueuePage() {
                               </button>
                               <button
                                 type="button"
-                                className={BTN_SM_DANGER}
+                                className={BTN_SM_SECONDARY}
                                 disabled={rowBusy}
                                 onClick={() => openReject(job)}
                               >
@@ -502,7 +540,6 @@ function QueuePage() {
                               重新入队
                             </button>
                           )}
-                          {/* 重新打印：已出纸/已结束的任务再打一份（后端只在这些状态下放行） */}
                           {REPRINTABLE.includes(job.status) && (
                             <button
                               type="button"
@@ -514,6 +551,24 @@ function QueuePage() {
                               重新打印
                             </button>
                           )}
+                          {target && (
+                            <label
+                              className={`${CHECK_LABEL} ${
+                                rowBusy
+                                  ? 'cursor-not-allowed opacity-60'
+                                  : 'cursor-pointer hover:bg-brand/10 hover:text-brand-dark dark:hover:bg-white/10'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                className="h-4 w-4 accent-brand"
+                                checked={false}
+                                disabled={rowBusy}
+                                onChange={() => void handleAdvance(job, target)}
+                              />
+                              <span>{target}</span>
+                            </label>
+                          )}
                           <button
                             type="button"
                             className="inline-flex items-center gap-1 rounded-lg bg-clay/10 px-2.5 py-1.5 text-xs font-medium text-clay transition-colors hover:bg-clay/20 disabled:cursor-not-allowed disabled:opacity-60"
@@ -524,25 +579,6 @@ function QueuePage() {
                             删除
                           </button>
                         </div>
-                        {/* 交接勾选：始终可见（不随悬浮隐藏），便于操作与自动化定位 */}
-                        {target && (
-                          <label
-                            className={`${CHECK_LABEL} ${
-                              rowBusy
-                                ? 'cursor-not-allowed opacity-60'
-                                : 'cursor-pointer hover:bg-brand/10 hover:text-brand-dark dark:hover:bg-white/10'
-                            }`}
-                          >
-                            <input
-                              type="checkbox"
-                              className="h-4 w-4 accent-brand"
-                              checked={false}
-                              disabled={rowBusy}
-                              onChange={() => void handleAdvance(job, target)}
-                            />
-                            <span>{target}</span>
-                          </label>
-                        )}
                       </td>
                     </tr>
                   )

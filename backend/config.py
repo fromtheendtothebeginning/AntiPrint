@@ -9,6 +9,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DB_CONFIG_FILE = BASE_DIR / "db_config.json"
 DATA_DIR = BASE_DIR / "data"
 UPLOAD_DIR = DATA_DIR / "uploads"      # 上传文件落盘根目录：uploads/<job_id>/<stored_name>
+CONVERTED_DIR = DATA_DIR / "converted"  # Office 转 PDF 缓存：converted/<sha256>.pdf（内容寻址，见 convert.py）
 LOG_DIR = BASE_DIR / "log"             # 日志目录：log/server.log
 DIST_DIR = BASE_DIR.parent / "frontend" / "dist"   # 前端构建产物（生产由 FastAPI 静态托管）
 
@@ -22,6 +23,9 @@ VERSION = "0.1.0"
 MAX_FILE_MB = 10
 MAX_FILE_SIZE = MAX_FILE_MB * 1024 * 1024
 MAX_FILES = 5
+
+# Office（Word/PPT）转 PDF 的单次超时（秒）：LibreOffice 首次启动较慢，给足余量
+CONVERT_TIMEOUT = 180
 
 # 默认库名（可用 MYSQL_DB 或 db_config.json 的 db 字段覆盖）
 DEFAULT_DB = "antiprint"
@@ -39,6 +43,7 @@ CORS_ORIGINS = ["http://localhost:3010", "http://127.0.0.1:3010"]
 # 目录在导入时创建，避免 pythonw 下写日志/上传时目录不存在
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+CONVERTED_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _load_db_config():

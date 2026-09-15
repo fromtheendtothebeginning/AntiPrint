@@ -1,10 +1,12 @@
 // 文件预览弹窗（共用）：PDF 用 iframe、图片用 img、其它类型提示下载
 // 两种用法：
 //   1) 远程文件：给 jobId + fileId，组件自己带 Bearer 取 blob（管理端队列 / 用户「我的任务」）
+//      Office（Word/PPT）服务端下发的就是转换后的 PDF，这里按 PDF 渲染即可
 //   2) 本地文件：给 localUrl（提交前预览所选文件，由调用方 createObjectURL 并负责回收）
 import { useEffect, useRef, useState } from 'react'
 import { Download, LoaderCircle, TriangleAlert } from 'lucide-react'
 import { api, getErrorMessage } from '../api'
+import { previewKind } from '../constants'
 import Modal from './Modal'
 
 interface FilePreviewProps {
@@ -18,12 +20,9 @@ interface FilePreviewProps {
   onClose: () => void
 }
 
-/** 按扩展名决定预览方式：PDF / 图片 / 其它（下载） */
+/** 预览方式：PDF / 图片 / 其它（Word/PPT 由服务端转成 PDF，走 PDF 分支） */
 function fileKind(filename: string): 'pdf' | 'image' | 'other' {
-  const lower = (filename || '').toLowerCase()
-  if (lower.endsWith('.pdf')) return 'pdf'
-  if (/\.(png|jpe?g|gif|webp|bmp)$/.test(lower)) return 'image'
-  return 'other'
+  return previewKind(filename)
 }
 
 function FilePreview({ open, filename, jobId, fileId, localUrl, onClose }: FilePreviewProps) {

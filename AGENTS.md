@@ -11,7 +11,7 @@
 | 前端 | React 18 + Vite + **TypeScript（strict）**，`@/*` 路径别名；**Tailwind CSS v4 + lucide-react**（2026-09-14 全站换肤为暖色仪表盘风格，token 见「前端约定」；不再用页面私有 CSS / 内联 SVG 图标库） |
 | 后端 | Python 3.14 + FastAPI + PyMySQL + **MySQL 8**（与 `D:\anticraft\index`、`antiClass` 一致） |
 | 静默打印 | **本机常驻打印代理**领取任务后静默打印（不用 `window.print()`，浏览器无法程序化选打印机/份数） |
-| 打印内容 | **仅文件上传**（PDF / 图片为可静默打印格式；Office 转换见「已知未定义」） |
+| 打印内容 | **仅文件上传**：PDF / 图片（png/jpg）直接可打印；**Word / PPT 上传时服务端先转 PDF**（LibreOffice headless，Windows 无 LibreOffice 时用本机 Office COM，见「Office 转 PDF」） |
 | 本地端口 | 后端 **8301**、Vite **3010**（3000/8000 被 `index`、**8300 被 natpierce 内网穿透工具占用**，2026-09-14 实测；3306 有 MySQL 在跑） |
 | 目标打印机 | `HP LaserJet Professional P1106`（USB001，本机唯一真实打印机，**主机型/GDI**）。**注意**：管理页「保存设置」会把下拉当前值一起写库，2026-09-14 18:25 被改成过 `Microsoft Print to PDF`（虚拟队列，静默打印会弹保存对话框）——改打印机后务必确认存的是 P1106。 |
 | 账号体系 | **anticraft 账号绑定登录**（协议：`D:\anticraft\index\docs\account-binding-api.md`）。① 主用：OAuth 授权码模式——前端跳 `GET /api/oauth/anticraft/start`（302 到 anticraft `/bind`）→ 用户确认 → 回跳 `GET /api/oauth/anticraft/callback`（服务端用 client_secret 换 token）→ 按 **anticraft 用户 ID** 绑定/创建本地账号（`users.source='anticraft'`、`users.anticraft_id`）→ 302 回前端落地页带一次性 ticket → `POST /api/oauth/anticraft/exchange` 换本地 JWT。密码不经过本项目。② 备用：`POST /api/login/anticraft` 用账号密码向 anticraft 校验（自动建号 + 密码同步）。③ 本地自建账号同名时**一律拒绝**（防顶号，含 admin）。**启用跳转授权必须先在 anticraft 后台「绑定应用」登记** `client_id`/`client_secret` 与**精确回调地址**，再填进「打印设置」（`anticraft_base` / `anticraft_client_id` / `anticraft_client_secret` / `anticraft_origins`） |
@@ -49,6 +49,9 @@
 | 手机端适配 | `node .tmp-test/ui-test14.mjs`（390×844 触摸视口） | 17 项全通过：登录页/提交第一步与第二步/我的任务/任务队列/管理设置/我的配置/用户管理**均无页面级横向溢出**（390/390）、小屏侧栏默认在屏幕外（x=-240）、点汉堡滑出到 x=0、点导航自动收起、手机端完整走通两步提交并成功、队列表格 1001px 靠容器内滚动且带「左右滑动」提示；页面 JS 错误 0 |
 | 撤回 / 重新打印 / 删除 | `backend\.venv\Scripts\python.exe .tmp-test/withdraw_reprint_test.py`（15 项）+ `node .tmp-test/ui-test15.mjs`（11 项） | API：待审核与已通过可撤回、已撤回/打印中/已打印不可撤、他人撤回 403、普通用户重打 403、已打印与待配送可重打且清掉 printed_at、重打后能被代理再次领取、已撤回不可重打、管理员可删除（删后 404）。UI：撤回按钮与确认弹窗、撤回后状态变「已撤回」且按钮消失、队列「重新打印」把任务打回已通过、「删除」二次确认后行消失且接口 404；页面 JS 错误 0 |
 | 内嵌预览（投放区变预览面板） | `node .tmp-test/ui-test11.mjs` | 12 项全通过：拖入 PDF 后投放提示消失、面板显示「正在预览」并渲染 iframe，继续拖入图片后点文件名可切换（img 出现、iframe 让位）、「放大查看」走弹窗、「清空」回到投放区、提交后我的任务与管理员队列预览仍正常；页面 JS 错误 0 |
+| 队列一行式布局（2026-09-15） | `node .tmp-test/ui-test16.mjs` | 16 项全通过：表头合并成 5 列、**除长地址外每行单行（49px，长地址行允许 101px）**、任务号/提交人/时间同行、文件与各自设置同行、配送徽章与地址同格、驳回理由截断成一行、操作区单行且「同意/驳回/删除」同一 y 坐标、**非地址列内容不溢出（超出即省略号）**、操作列装得下「重新打印/待配送/删除」、1920 视口下表格不横向滚动且操作列完整可见、点「同意」仍可用；页面 JS 错误 0 |
+| Office（Word/PPT）转 PDF（2026-09-15） | `powershell -File .tmp-test/make_office_fixtures.ps1`（造测试件）+ `backend\.venv\Scripts\python.exe .tmp-test/office_convert_test.py`（34 项）+ `node .tmp-test/ui-test17.mjs`（13 项） | API 34 项全通过：提交页预览接口把 docx/pptx 转成 PDF（`%PDF` 头、inline disposition）、非 Office/未登录/超 10MB/假 docx 一律 400、**含 docx+pptx+pdf 的混合任务提交成功且文件名保持原名**、用户与管理员预览拿到的都是转换后的 PDF（`原名.pdf`）而 `?download=1` 给原文件（zip 头 PK）、代理 claim 带 `print_name=原名.pdf` 且下载字节是 PDF、转换缓存按 sha256 命中（mtime 未变）且删任务后清理、docm/pptm 仍拒绝。UI 13 项全通过：投放区文案、转换中「正在把 Word/PPT 转成 PDF…」、右栏 iframe 预览 +「（Word/PPT 已转 PDF）」标注、加 PPT 一起提交成功、「我的任务」与管理员队列点文件名预览的都是 PDF、同意后代理领取到 PDF；页面 JS 错误 0。**本机实测耗时：Word ≈6s、PPT ≈23s**（Office COM；LibreOffice 一般更快） |
+| Office 转 PDF **线上部署**（2026-09-15） | `bash deploy/pack.sh` → `backend\.venv\Scripts\python.exe .tmp-test/prod_office_check.py`（口令从 `PROD_ADMIN_PW` 环境变量读，脚本不落口令） | 部署后：线上首页引用新 dist（`index-DNmMwP_w.js` 内含「Word/PPT 会先转成 PDF」文案）、`POST /api/preview/office` 返回 401（新接口已上线）、**线上提交 docx 成功且预览拿到 34532B 的 PDF、`?download=1` 给原 zip**、测试任务已删除（未审批 → 不会出纸）；服务器 soffice 用后端同款命令实跑 Word 2.7s / PPT 2.6s |
 
 **测试中修掉的真 bug（勿回退）**：
 1. **代理把 `dry_run` 判断成恒真** —— 服务端下发的是字符串 `"0"`，`bool("0")` 在 Python 里是 `True`，导致代理永远只干跑却回报成功（任务被误标已打印）。已改为 `truthy()` 解析（`print_agent.py`），**任何服务端开关值都要走它**。
@@ -64,12 +67,15 @@ frontend/          React 18 + Vite + TS；dev 3010，/api 代理到 127.0.0.1:83
   src/pages/       LoginPage / SubmitPage / MyJobsPage / ProfilePage（我的配置）/ QueuePage（任务队列，管理员）/ AdminPage（管理设置）/ AnticraftCallbackPage（各带同名 .css 已删除，全部 Tailwind）
   src/components/  Modal / DropZone / FileChips / TextField / ThemeToggle / Icons
   src/api.ts       所有请求的唯一出口（401 统一处理）；src/types/api.ts 接口类型
-backend/           FastAPI + MySQL；main.py 入口、db.py 存储层、auth.py 认证、agent_api.py 代理接口、config.py、constants.py
-  data/uploads/<job_id>/   上传文件存储（gitignore）；log/server.log 运行日志（gitignore）
+backend/           FastAPI + MySQL；main.py 入口、db.py 存储层、auth.py 认证、agent_api.py 代理接口、config.py、constants.py、convert.py（Office→PDF）
+  data/uploads/<job_id>/   上传文件存储（gitignore）；data/converted/<sha256>.pdf Office 转换缓存（gitignore）；log/server.log 运行日志（gitignore）
   db_config.json / db_config.example.json   DB 凭据（前者 gitignore）
 agent/             Windows 打印代理（Python + requests，常驻）
   print_agent.py   轮询/领取/打印/回报；config.json 本机配置（gitignore，模板 config.example.json）
+  install/start/stop/check-agent.bat + apply-config.ps1   安装/启动/停止/自检（整仓库与分发包共用同一份；脚本自定位解释器）
+  README.txt       分发包里给管理员看的中文安装说明（pack-agent.sh 会打进 zip）
   tmp/<job_id>/    下载的待打印文件（gitignore）；log/agent.log 日志（gitignore）
+dist/              打包产物（gitignore）：AntiPrintAgent-<版本>.zip 与 .cache/（Python embeddable 下载缓存）
 setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（bat 必须纯 ASCII + CRLF）
 ```
 
@@ -81,6 +87,7 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
 - 前端：`npm.cmd run dev`（Vite 3010，`/api` 代理 `127.0.0.1:8301`）
 - 前端类型/构建验证：`npm.cmd run build`（`tsc --noEmit && vite build`，**类型错误会阻断构建**）
 - 一键：`setup.bat`（建 venv + 装依赖 + `npm.cmd install` + 构建前端）/ `run.bat`（无窗口起后端 + 代理）/ `stop.bat`（调 `stop.ps1`，按端口与路径精确停本项目进程，**不碰 index/antiClass**）
+- 打印代理分发包：`bash deploy/pack-agent.sh` → `dist/AntiPrintAgent-<版本>.zip`（自带 Python 运行环境，发给别人装代理用）
 - 代理：`--selftest`（自检）/ `--printers`（列打印机）/ `--once`（只跑一轮，调试用）/ `--dry-run`（只打命令行不出纸）
 - **服务常驻方式（已实测）**：`schtasks /Create /TN AntiPrintRun /TR "cmd /c <仓库>\run.bat" /SC ONCE /ST 00:00 /F` → `/Run` → 删除任务，进程仍活着。`run.bat` 内部用 `start ""` + **绝对路径**拉起 `pythonw.exe`（相对路径会让 stop.ps1 匹配不到）；不要内联 `Start-Process`（会被工具会话回收）。Git Bash 里调 schtasks 要先 `export MSYS_NO_PATHCONV=1`，否则 `/Create` 被当成路径。
 - **无 linter、无测试框架**。验证方式：`curl http://127.0.0.1:8301/api/health` + `npm.cmd run build` 通过 + 真实打印一张测试页（见「验证记录」）
@@ -105,7 +112,9 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
 - **「默认启动器」**（管理设置页可选，存 `settings` 表下发给代理，断网时用 `agent/config.json` 兜底）：① 启动器程序：SumatraPDF / 系统默认关联程序；② 目标打印机：代理上报的本地队列列表（默认 P1106）；③ 打印参数：份数 / 双面 / 纸张；④ 是否打印封面页（待确认，见下）。
 - **开关值一律用 `truthy()` 解析**（`print_agent.py` 顶层）：服务端 `settings` 存的是字符串 `'0'`/`'1'`，`bool('0')` 恒为 `True` —— 曾因此让代理永远只干跑却回报「已打印」。新增任何服务端布尔配置都必须走它。
 - **演练模式（dry-run）也会把任务回报成「已打印」**：它只验链路不出纸，别拿它当出纸验证；真要验证出纸必须关掉演练打一张真页。
-- `--selftest` / `--printers` / `--once` / `--dry-run` 四个开关覆盖了排查全流程；单实例锁（`agent.lock`）会拦住第二个代理，避免重复出纸。
+- `--selftest` / `--printers` / `--once` / `--dry-run` 四个开关覆盖了排查全流程（`check-agent.bat` 就是前两个的封装）；单实例锁（`agent.lock`）会拦住第二个代理，避免重复出纸。
+- **分发包（发给别的管理员/别的机器）**：`bash deploy/pack-agent.sh` 生成 `dist/AntiPrintAgent-<版本>.zip` —— 内置 python.org embeddable 运行环境（版本取后端 venv，依赖从 venv 复制到 `runtime\Lib\site-packages` 并写进 `._pth`），**收包机器不需要装 Python**；打包时会校验包内不含 `config.json` 与真实令牌。`agent/*.bat` 是自定位的：解释器按「包内 `runtime\` → 仓库 `..\backend\.venv` → PATH」找，所以同一份脚本整仓库里也能跑；`install-agent.bat` 交互问 server / agent_token / printer，由 `apply-config.ps1` 写进 config.json。**SumatraPDF 路径不再写死**：`find_sumatra()` 按「配置 → `%LOCALAPPDATA%\SumatraPDF` → Program Files → PATH」查找（`--selftest` 第 4 步会检查，缺了直接判失败）。
+- **服务端下发的打印配置是全局的**（`heartbeat` 只回 `launcher`/`printer_name`/`copies`/`dry_run`，所有代理共用）：多台代理接不同型号打印机时，`printer_name` 只能在管理页统一改，本机 `config.json` 会被覆盖。
 
 ## 任务状态机
 
@@ -151,7 +160,24 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
 ## 上传与安全
 
 - 单文件 ≤10MB、单任务 ≤5 个文件；**扩展名黑名单**（可执行/脚本/网页/Office 宏等一律 400，沿用 `antiClass` 的 `DANGEROUS_EXT` 思路）；sha256 内容去重；文件名净化 + 防目录穿越（存 `backend/data/uploads/<job_id>/`，库内存相对路径）。
-- 白名单优先：可静默打印的 **PDF / png / jpg** 直接放行，其余类型按「已知未定义」处理。
+- 白名单 `constants.UPLOAD_EXT` = PDF / png / jpg（直接可打印）+ **docx/doc/pptx/ppt（Office，先转 PDF）**；含宏的 docm/pptm/xlsm 仍在黑名单，其余类型 400。
+- **一个任务里可以混装**：Office 文件各自转出的 PDF 与原生 PDF/图片一起交给代理打印，代理侧看到的一律是 PDF。
+
+## Office 转 PDF（Word / PPT，2026-09-15 新增）
+
+**放服务端转换**（不是代理端）：提交人要在**提交前**就预览内容（提交页第一步右栏），只有服务端能转；代理于是永远只拿 PDF，SumatraPDF 侧零改动。
+
+- **转换器两个后端，自动挑**（`backend/convert.py`，都不需要 pywin32）：
+  ① **LibreOffice headless**（跨平台，**生产 = 阿里云 Linux 走这条**）：`soffice -env:UserInstallation=<临时 profile> --headless --nologo --norestore --convert-to pdf --outdir <目录> <文件>`。
+  ② **Microsoft Office COM**（仅 Windows，PowerShell 驱动 Word/PowerPoint，本机开发/验收在用）：PowerPoint `SaveAs(...,32)` / Word `ExportAsFixedFormat(...,17)`。
+  查找顺序：`SOFFICE_PATH` 环境变量 → `PATH` 里的 `soffice` → 常见安装路径（`C:\Program Files\LibreOffice\program\soffice.exe`、`/usr/bin/soffice`、`/usr/lib/libreoffice/program/soffice`、snap…）。找不到 LibreOffice 且不是 Windows 时才报错。
+- **缓存**：`backend/data/converted/<sha256>.pdf`（内容寻址）。提交页预览转一次 → 正式提交同一份文件**直接命中缓存**；删除任务时若没有别的任务引用同一 sha256 就一并删掉缓存（`db.sha256_in_use()`）。
+- **接口行为**：① `POST /api/preview/office`（multipart 单文件，登录即可）返回转换后的 PDF，给提交页预览用；② `GET /api/jobs/{id}/files/{fid}` **inline 时 Office 一律给转换后的 PDF**（文件名变成 `原名.pdf`），`?download=1` 才是用户上传的原文件；③ 代理的 `GET /api/agent/jobs/{id}/files/{fid}` 也给 PDF，并在 claim 里带 `print_name`（`原名.pdf`）。
+- **代理约定**：`download_file` 用 `print_name`（没有则退回 `filename`）落盘 —— **后缀必须是 `.pdf`**，否则 SumatraPDF 按 `.docx` 拒打。
+- **失败即拒绝**：上传时转换失败直接 400（中文原因），**不让打不出来的任务进队列**；提交页预览失败也会直接显示错误。
+- **Office COM 的四个坑（本机实测，改前必读）**：① 输出路径必须在 Python 侧算好、**以字面量传给脚本**——脚本里用 `Join-Path` 拼出来的路径（值一模一样）会让 `ExportAsFixedFormat` 静默卡死到超时；② 必须 `powershell -Command <内联脚本>`，**不能用 `-File 脚本文件`**（同样卡死）；③ 收尾 `Quit` 必须 `try/catch` 包住，否则 `Quit` 报错会留下无窗口僵尸 `WINWORD`，下一次转换直接卡死；④ 转换失败/超时后调 `convert.reset_office_state()`：先 `GetActiveObject` 礼貌退出、再兜底 `Kill` 无窗口实例（用户自己开的 Word 有窗口，不会误杀）、最后清 `HKCU\...\Word\Resiliency\DocumentRecovery`（强杀会让 Word 记崩溃恢复，之后每次启动都可能弹恢复面板卡住）。
+- **超时**：LibreOffice `config.CONVERT_TIMEOUT=180s`（首次启动 + 大文档），Office COM `COM_TIMEOUT=90s`（正常 5~25 秒：Word 约 6s、PPT 约 23s）。转换串行（模块级锁），避免多个 LibreOffice/Office 实例互相抢。
+- **装机要求**：生产服务器（Linux）必须装 LibreOffice：`apt-get install -y --no-install-recommends libreoffice-writer libreoffice-impress`；Windows 用 `winget install TheDocumentFoundation.LibreOffice`。本机（开发/验收）用 Microsoft Office COM，所以**没装 LibreOffice 也能转**；装了 LibreOffice 会自动优先用它。
 
 ## 前端约定
 
@@ -165,6 +191,7 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
   - 危险按钮：次按钮基础上换 `bg-clay text-white shadow-clay/25`
   - 输入/文本域：`w-full rounded-xl border border-gray-200 bg-warm px-4 py-2.5 text-sm text-gray-800 placeholder:text-gray-400 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30 dark:border-white/10 dark:bg-white/5 dark:text-gray-100`
   - 表格：`w-full` + 表头 `border-b border-gray-100 dark:border-white/10` 与 `px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-400` + 行 `group border-b border-gray-50 transition-colors hover:bg-warm dark:border-white/5 dark:hover:bg-white/5`；行内操作按钮用 `opacity-0 transition-opacity group-hover:opacity-100`
+    - **任务队列表格用 `table-fixed` + `<colgroup>` 定宽**（2026-09-15）：任务 210 / 文件与设置 **auto**（吃剩余宽度）/ 配送方式与地址 220 / 状态 195 / 操作 285，表格 `min-w-[1210px]`。**别改回 `table-layout:auto`** —— 自动布局下各列会互相挤（长地址那一行把地址列压到 120px），于是短地址也换行、**每一行都从 49px 涨到 81px**，还会连累其他列。定宽后除地址列外每列内容都靠 `truncate`（+ `title` 悬停看全文）收敛成一行，行高稳定 49px。① 任务列 = `#号 + 提交人(flex-1 truncate) + 时间`，时间用 `shortTime()` 压成 `09/15 12:45`（完整值在 `title`）；② 文件列每个文件是 `min-w-0` 的可收缩块（文件名/设置摘要各自 `truncate`）；③ 状态列的驳回理由/打印错误用 `shorten(text, 8)` + `truncate`；④ 操作列按钮**不能带 `mt-*`**（会把该行按钮推到与同格其他按钮不同高度）。
   - 徽章：`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium`，配色一律「同色 10% 底 + 本色字」
   - 弹窗：遮罩 `fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm`，面板 `w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-ink-soft`
   - 空状态：`flex flex-col items-center gap-3 rounded-2xl border border-dashed border-gray-200 bg-white/60 px-6 py-16 text-center text-sm text-gray-400 dark:border-white/10 dark:bg-white/5`
@@ -181,6 +208,7 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
 ## 部署（Windows → 阿里云 47.100.125.150）
 
 - **已部署（2026-09-14）**：代码在 `/var/www/antiprint`（`backend/` + `frontend/dist` + 文档），venv 在 `backend/.venv`，systemd 单元 `antiprint-api`（`WorkingDirectory=/var/www/antiprint/backend`、`ExecStart=.../uvicorn main:app --host 127.0.0.1 --port 8301`、`Environment=SECRET_KEY=<随机 64 位 hex>`）；MySQL 建了独立库 `antiprint` 与专用账号 `antiprint`（口令与 anticraft 的库口令一致，写在 `/var/www/antiprint/backend/db_config.json`，权限 600）；**前端 dist 随包上传，由后端单进程托管**（同 `antiClass`）。
+- **服务器已装 LibreOffice（2026-09-15）**：Ubuntu 24.04 + `apt-get install -y --no-install-recommends libreoffice-writer libreoffice-impress` → **LibreOffice 24.2.7.2**，`/usr/bin/soffice → /usr/lib/libreoffice/program/soffice`（`convert.find_soffice()` 的 PATH/候选路径都能命中），网络净增约 400MB。**已在本机生成测试件、scp 到服务器用后端同款命令实跑**：Word→PDF **2.7s**、PPT→PDF **2.6s**、都是 `%PDF`（比 Windows 的 Office COM 路线快一个数量级）。转换时会出现 `failed to launch javaldx` 警告，**属正常**（`--no-install-recommends` 没装 JRE，PDF 导出不需要 Java）。服务器免密 SSH 可用（密钥认证，`root@47.100.125.150`），**不需要、也不允许读取部署脚本里的口令**。
 - **管理员账号**：线上为 `end`（role=admin）；播种的 `admin` 口令已随机化（`admin123` 登录返回 401）。建号脚本：`.tmp-test/server_create_admin.py`（从 stdin 读用户名与口令，命令行不落口令）。
 - **nginx**：站点配置在服务器 `/etc/nginx/sites-available/antiprint`（仓库留档 `deploy/nginx-antiprint.conf`，`print.anticraft.top` → 127.0.0.1:8301，`client_max_body_size 60m`）。**DNS 解析生效后**再启用：`ln -sf ... sites-enabled/ && nginx -t && systemctl reload nginx && certbot --nginx -d print.anticraft.top`；服务器上 `/root/finish-antiprint-deploy.sh` 把「写线上设置 + 启用 nginx + 申请证书 + 自测」打包成一步（幂等，DNS 未生效会自动跳过 nginx 部分）。2026-09-14 部署时 `print.anticraft.top` 尚无 A 记录，故域名证书待启用。
 - **线上入口（2026-09-14 定型）**：`https://print.anticraft.top/` 是**主入口**（Let's Encrypt 证书，`certbot --nginx` 签发、90 天自动续期、http 301 跳 https）；`http://47.100.125.150/` 是明文回退入口；`https://47.100.125.150/` 用**自签证书** `/etc/nginx/ssl/antiprint-ip.{crt,key}`（CN/SAN = IP，600 权限）——浏览器会提示「不受信任」，**Let's Encrypt 明确不为纯 IP 签发证书**（`certbot ... -d <IP>` 会被拒，实测）。**8301 端口被阿里云安全组封锁**，外网只通 80/443。
@@ -198,7 +226,7 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
 
 ## 已知未定义（实现前须与用户确认，勿臆测）
 
-1. **Office（docx/xlsx/pptx）如何转 PDF 才能静默打印** —— 需本机 Office/WPS COM 还是 LibreOffice headless？在确认前，Office 文件应按「不支持静默打印」明确拒绝或提示。
+1. ~~**Office（docx/xlsx/pptx）如何转 PDF 才能静默打印**——需本机 Office/WPS COM 还是 LibreOffice headless？~~ **已定案（2026-09-15）**：**服务端**转，优先 LibreOffice headless、Windows 无 LibreOffice 时用 Office COM，见「Office 转 PDF」一节；用户明确要求「支持 Word 和 PPT，在预览前先转换成 PDF」。**xlsx（Excel）暂不支持**（用户只提了 Word/PPT；要加只需把 `.xlsx/.xls` 放进 `OFFICE_EXT`，转换器已能处理）。
 2. 配送地址是否要打印成**封面页/面单**（当前默认：仅线上跟踪，不打印）。
 3. 用户注册是否需要**邀请码**（`index` 用邀请码门控），还是管理员建号。
 4. 域名（`print.anticraft.top`？）与最终端口分配。
@@ -230,4 +258,5 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
 3. 接口链路：`backend\.venv\Scripts\python.exe .tmp-test\e2e.py`（28 项）全绿；
 4. UI 链路：`node .tmp-test\ui-test3.mjs` 全绿（登录/提交/同意/驳回/预览/代理在线）；
 5. **真实出纸**：管理页同意一单 → 代理 `--once`（演练必须关闭）→ 任务转「已打印」+ 打印机队列清空（静默打印链路必须真机验证，不能只看接口返回）；
-6. 重启后端/代理后状态不丢（状态在 MySQL，不在内存）。
+6. 重启后端/代理后状态不丢（状态在 MySQL，不在内存）；
+7. **Office（Word/PPT）**：`backend\.venv\Scripts\python.exe .tmp-test\office_convert_test.py`（34 项）+ `node .tmp-test\ui-test17.mjs`（13 项）全绿；**动过转换链路或换/重装服务器后**，另跑线上冒烟 `PROD_ADMIN_PW=... backend\.venv\Scripts\python.exe .tmp-test\prod_office_check.py`（提交 docx → 预览是 PDF → 删除任务，**不审批所以不会出纸**）。

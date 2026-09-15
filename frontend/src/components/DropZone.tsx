@@ -2,11 +2,13 @@
 //   1) 默认：虚线投放区（点击或拖入选择文件），已选文件用 FileChips 展示
 //   2) previewInline：选完文件后投放区**变成预览面板**（PDF 用 iframe、图片用 img），
 //      面板里可以切换文件、继续添加、清空，并支持把文件直接拖进面板继续追加
+//      当前文件的预览地址可由调用方接管（activePreviewUrl）：Word/PPT 要先在服务端转成 PDF
 // hideChips：只渲染投放区与隐藏 input，不渲染 FileChips（调用方自己画文件列表，如提交页）
 import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, DragEvent, KeyboardEvent } from 'react'
-import { Expand, Plus, Trash2, UploadCloud } from 'lucide-react'
+import { Expand, LoaderCircle, Plus, Trash2, UploadCloud } from 'lucide-react'
 import FileChips from './FileChips'
+import { previewKind } from '../constants'
 
 interface DropZoneProps {
   files: File[]
@@ -22,14 +24,12 @@ interface DropZoneProps {
   previewInline?: boolean
   /** 为真时只渲染投放区与隐藏 input，不再渲染 FileChips（文件列表由调用方自己画） */
   hideChips?: boolean
-}
-
-/** 按扩展名决定内嵌预览方式 */
-function fileKind(name: string): 'pdf' | 'image' | 'other' {
-  const lower = (name || '').toLowerCase()
-  if (lower.endsWith('.pdf')) return 'pdf'
-  if (/\.(png|jpe?g|gif|webp|bmp)$/.test(lower)) return 'image'
-  return 'other'
+  /** 当前文件的服务端预览地址（Word/PPT 转好的 PDF）；给了就用它，不再用本地 objectURL */
+  activePreviewUrl?: string
+  /** 正在服务端转换当前文件（显示加载态，替代预览） */
+  activePreviewLoading?: boolean
+  /** 转换失败的中文提示（显示在预览位置） */
+  activePreviewError?: string
 }
 
 function DropZone({
@@ -41,6 +41,9 @@ function DropZone({
   onPreview,
   previewInline = false,
   hideChips = false,
+  activePreviewUrl,
+  activePreviewLoading = false,
+  activePreviewError = '',
 }: DropZoneProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragging, setDragging] = useState(false)
@@ -54,16 +57,17 @@ function DropZone({
     if (activeIndex > files.length - 1) setActiveIndex(Math.max(0, files.length - 1))
   }, [files.length, activeIndex])
 
-  // 当前预览文件的临时地址（切换文件或列表变化时重建，卸载时回收）
+  // 当前预览文件的临时地址（切换文件或列表变化时重建，卸载时回收）；
+  // activePreviewUrl 由调用方给出（Word/PPT 转好的 PDF）时直接用，不再造本地地址
   useEffect(() => {
-    if (!activeFile) {
+    if (!activeFile || activePreviewUrl) {
       setPreviewUrl('')
       return
     }
     const url = URL.createObjectURL(activeFile)
     setPreviewUrl(url)
     return () => URL.revokeObjectURL(url)
-  }, [activeFile])
+  }, [activeFile, activePreviewUrl])
 
   /** 合并新选择的文件：单选直接替换，多选追加（同名同大小视为重复，忽略） */
   function addFiles(incoming: File[]) {
@@ -108,7 +112,8 @@ function DropZone({
     onDrop: handleDrop,
   }
 
-  const kind = activeFile ? fileKind(activeFile.name) : 'other'
+  const kind = activeFile ? previewKind(activeFile.name) : 'other'
+  const shownUrl = activePreviewUrl || previewUrl
 
   return (
     <div className="space-y-3">
@@ -158,13 +163,22 @@ function DropZone({
           </div>
 
           <div className="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-white/10 dark:bg-ink">
-            {previewUrl && kind === 'pdf' && (
-              <iframe className="h-[480px] w-full" src={previewUrl} title={activeFile.name} />
+            {activePreviewLoading && (
+              <p className="flex items-center justify-center gap-2 px-4 py-16 text-sm text-gray-400">
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+                正在把 Word/PPT 转成 PDF（服务端转换，稍等几秒）…
+              </p>
             )}
-            {previewUrl && kind === 'image' && (
-              <img className="mx-auto max-h-[480px]" src={previewUrl} alt={activeFile.name} />
+            {!activePreviewLoading && activePreviewError && (
+              <p className="px-4 py-8 text-center text-sm text-clay">{activePreviewError}</p>
             )}
-            {previewUrl && kind === 'other' && (
+            {!activePreviewLoading && !activePreviewError && shownUrl && kind === 'pdf' && (
+              <iframe className="h-[480px] w-full" src={shownUrl} title={activeFile.name} />
+            )}
+            {!activePreviewLoading && !activePreviewError && shownUrl && kind === 'image' && (
+              <img className="mx-auto max-h-[480px]" src={shownUrl} alt={activeFile.name} />
+            )}
+            {!activePreviewLoading && !activePreviewError && shownUrl && kind === 'other' && (
               <p className="px-4 py-8 text-center text-xs text-gray-400">
                 该文件类型不支持内嵌预览，提交后管理员可下载查看
               </p>

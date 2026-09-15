@@ -49,8 +49,14 @@ HANDOVER_NEXT = {
     S_AWAIT_PICKUP: {S_DONE: None},
 }
 
-# 可静默打印的白名单：PDF 与图片（Office 转换未定，一律拒绝）
+# 可直接静默打印的白名单：PDF 与图片（PDF 是最终形态，图片由 SumatraPDF 直接排版打印）
 PRINTABLE_EXT = {".pdf", ".png", ".jpg", ".jpeg"}
+
+# 需先转 PDF 才能预览/打印的 Office 类型（2026-09-15 起支持；转换器 = LibreOffice headless，见 convert.py）
+OFFICE_EXT = {".docx", ".doc", ".pptx", ".ppt"}
+
+# 允许上传的类型：能直接打印的 + 需转换的（含宏的 docm/pptm 等仍在下面的黑名单里，先于这里判 400）
+UPLOAD_EXT = PRINTABLE_EXT | OFFICE_EXT
 
 # 危险类型黑名单：可执行/脚本/网页/含宏 Office 等，命中直接 400
 DANGEROUS_EXT = {
