@@ -25,6 +25,17 @@ export type JobStatus =
   | '待取件'
   | '已完成'
 
+/** 任务的打印设置（后端 print_options；空对象/缺字段表示用打印机驱动默认值） */
+export interface PrintOptions {
+  copies?: number
+  duplex?: 'simplex' | 'duplexlong' | 'duplexshort'
+  paper?: string
+  pages?: string
+  nup?: string
+  scale?: 'fit' | 'noscale' | 'shrink'
+  color?: 'monochrome' | 'color'
+}
+
 export interface JobFile {
   id: number
   filename: string
@@ -49,6 +60,8 @@ export interface Job {
   printed_at: string | null
   /** 交接完成（标记为「已完成」）的时间 */
   finished_at: string | null
+  /** 打印设置（份数/双面/纸张/页面范围/每面页数/缩放/颜色） */
+  print_options?: PrintOptions
   files: JobFile[]
 }
 

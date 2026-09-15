@@ -3,12 +3,22 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
-import { CircleAlert, CircleCheckBig, FileText, LoaderCircle, Store, Truck, Upload, UserCog } from 'lucide-react'
+import { CircleAlert, CircleCheckBig, FileText, LoaderCircle, Printer, Store, Truck, Upload, UserCog } from 'lucide-react'
 import { api, getErrorMessage } from '../api'
 import DropZone from '../components/DropZone'
 import TextField from '../components/TextField'
 import FileChips from '../components/FileChips'
-import { DELIVER, PICKUP, statusBadge } from '../constants'
+import {
+  COLOR_OPTIONS,
+  DELIVER,
+  DUPLEX_OPTIONS,
+  NUP_OPTIONS,
+  PAPER_OPTIONS,
+  PICKUP,
+  SCALE_OPTIONS,
+  describePrintOptions,
+  statusBadge,
+} from '../constants'
 import type { DeliveryMode, Job } from '../types/api'
 
 const MAX_FILES = 5
@@ -17,11 +27,23 @@ const ACCEPT = 'application/pdf,image/png,image/jpeg'
 /** 配送方式选项：取值就是后端 delivery_mode 的字面量 */
 const MODE_OPTIONS: DeliveryMode[] = [DELIVER, PICKUP]
 
+/** 打印设置里的小控件统一样式（数字框/文本框/下拉共用） */
+const SELECT_CLASS =
+  'w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder:text-gray-400 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30 disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/10 dark:bg-white/5 dark:text-gray-100'
+
 function SubmitPage() {
   const [files, setFiles] = useState<File[]>([])
   const [mode, setMode] = useState<DeliveryMode>(DELIVER)
   const [address, setAddress] = useState('')
   const [note, setNote] = useState('')
+  // 打印设置：默认给确定值（单面 / A4 / 黑白 / 1 页每张 / 适应纸张 / 1 份），不依赖驱动默认
+  const [copies, setCopies] = useState('1')
+  const [duplex, setDuplex] = useState('simplex')
+  const [paper, setPaper] = useState('A4')
+  const [pages, setPages] = useState('')
+  const [nup, setNup] = useState('1,1')
+  const [scale, setScale] = useState('fit')
+  const [color, setColor] = useState('monochrome')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [created, setCreated] = useState<Job | null>(null)
@@ -82,6 +104,13 @@ function SubmitPage() {
     const formData = new FormData()
     formData.append('delivery_mode', mode)
     formData.append('address', trimmedAddress)
+    formData.append('copies', copies || '1')
+    formData.append('duplex', duplex)
+    formData.append('paper', paper)
+    formData.append('nup', nup)
+    formData.append('scale', scale)
+    formData.append('color', color)
+    if (pages.trim()) formData.append('pages', pages.trim())
     if (note.trim()) formData.append('note', note.trim())
     for (const file of files) formData.append('files', file)
 
@@ -93,6 +122,8 @@ function SubmitPage() {
       setFiles([])
       setAddress('')
       setNote('')
+      setPages('')
+      setCopies('1')
     } catch (err) {
       setError(getErrorMessage(err))
     } finally {
@@ -121,7 +152,13 @@ function SubmitPage() {
           </li>
           <li className="flex items-center justify-between gap-3">
             <span className="shrink-0 text-gray-400">配送方式</span>
-            <span className="text-gray-700 dark:text-gray-200">{created.delivery_mode}</span>
+            <span className="font-medium text-gray-700 dark:text-gray-200">{created.delivery_mode}</span>
+          </li>
+          <li className="flex items-center justify-between gap-3">
+            <span className="shrink-0 text-gray-400">打印设置</span>
+            <span className="text-right font-medium text-gray-700 dark:text-gray-200">
+              {describePrintOptions(created.print_options, created.copies)}
+            </span>
           </li>
           {created.address && (
             <li className="flex items-start justify-between gap-3">
@@ -208,6 +245,116 @@ function SubmitPage() {
             })}
           </div>
         </fieldset>
+
+        {/* 打印设置：份数 / 单双面 / 纸张 / 颜色 / 页面范围 / 每张页数 / 缩放，随任务下发给打印代理 */}
+        <div className="rounded-xl border border-gray-100 bg-warm/60 p-4 dark:border-white/10 dark:bg-white/5">
+          <div className="mb-3 flex items-center gap-2">
+            <Printer className="h-4 w-4 text-gray-400" />
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-200">打印设置</span>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className="mb-1 block text-xs text-gray-500 dark:text-gray-400">份数</span>
+              <input
+                type="number"
+                min={1}
+                max={99}
+                className={SELECT_CLASS}
+                value={copies}
+                disabled={submitting}
+                onChange={(event) => setCopies(event.target.value)}
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs text-gray-500 dark:text-gray-400">单/双面</span>
+              <select
+                className={SELECT_CLASS}
+                value={duplex}
+                disabled={submitting}
+                onChange={(event) => setDuplex(event.target.value)}
+              >
+                {DUPLEX_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs text-gray-500 dark:text-gray-400">纸张大小</span>
+              <select
+                className={SELECT_CLASS}
+                value={paper}
+                disabled={submitting}
+                onChange={(event) => setPaper(event.target.value)}
+              >
+                {PAPER_OPTIONS.map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs text-gray-500 dark:text-gray-400">颜色</span>
+              <select
+                className={SELECT_CLASS}
+                value={color}
+                disabled={submitting}
+                onChange={(event) => setColor(event.target.value)}
+              >
+                {COLOR_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs text-gray-500 dark:text-gray-400">页面范围（可选）</span>
+              <input
+                className={SELECT_CLASS}
+                placeholder="例如 1-3,5（留空=全部）"
+                value={pages}
+                disabled={submitting}
+                onChange={(event) => setPages(event.target.value)}
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs text-gray-500 dark:text-gray-400">每张纸页数</span>
+              <select
+                className={SELECT_CLASS}
+                value={nup}
+                disabled={submitting}
+                onChange={(event) => setNup(event.target.value)}
+              >
+                {NUP_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block sm:col-span-2">
+              <span className="mb-1 block text-xs text-gray-500 dark:text-gray-400">缩放</span>
+              <select
+                className={SELECT_CLASS}
+                value={scale}
+                disabled={submitting}
+                onChange={(event) => setScale(event.target.value)}
+              >
+                {SCALE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <p className="mt-3 text-xs text-gray-400">
+            以上设置对本次任务的所有文件生效；本机打印机为黑白激光（A4），超出机型能力的选项由驱动自行处理
+          </p>
+        </div>
 
         <TextField
           label={isPickup ? '取件地点备注（可选）' : '配送地址'}

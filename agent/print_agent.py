@@ -455,8 +455,41 @@ class PrintAgent:
 
     # ---------- 打印 ----------
 
-    def build_sumatra_command(self, file_path: Path, printer_name: str, copies: int) -> list[str]:
-        """拼 SumatraPDF 静默打印命令。"""
+    @staticmethod
+    def build_print_settings(copies: int, options: dict) -> str:
+        """把任务里的打印设置拼成 SumatraPDF `-print-settings` 的参数串。
+
+        顺序：份数 → 单双面 → 纸张 → 颜色 → 页面范围 → 每面页数 → 缩放。
+        取值都是提交页白名单里的 SumatraPDF 原生 token（服务端已校验），这里只做拼装。
+        """
+        options = options or {}
+        parts = []
+        if int(copies or 1) > 1:
+            parts.append("%dx" % int(copies))
+        duplex = str(options.get("duplex") or "")
+        if duplex in ("simplex", "duplexlong", "duplexshort"):
+            parts.append(duplex)
+        paper = str(options.get("paper") or "")
+        if paper:
+            parts.append("paper=%s" % paper)
+        color = str(options.get("color") or "")
+        if color in ("monochrome", "color"):
+            parts.append(color)
+        pages = str(options.get("pages") or "").strip()
+        if pages:
+            parts.append(pages)
+        nup = str(options.get("nup") or "")
+        if nup and nup != "1,1":
+            parts.append(nup)
+        scale = str(options.get("scale") or "")
+        if scale:
+            parts.append(scale)
+        return ",".join(parts)
+
+    def build_sumatra_command(
+        self, file_path: Path, printer_name: str, copies: int, options: dict | None = None
+    ) -> list[str]:
+        """拼 SumatraPDF 静默打印命令（份数与打印设置统一走 -print-settings）。"""
         exe = str(self.cfg.get("sumatra_path") or "").strip() or DEFAULT_SUMATRA_PATH
         if not Path(exe).is_file():
             raise PrintError("未找到 SumatraPDF：%s（请检查 config.json 的 sumatra_path）" % exe)
@@ -467,13 +500,14 @@ class PrintAgent:
         else:
             command += ["-print-to-default"]
         command += ["-silent", "-exit-when-done"]
-        if copies > 1:
+        settings = self.build_print_settings(copies, options or {})
+        if settings:
             # 追加在文件路径之前，避免 SumatraPDF 把选项误当成文件名
-            command += ["-print-settings", "%dx" % copies]
+            command += ["-print-settings", settings]
         command.append(str(file_path))
         return command
 
-    def print_file(self, file_path: Path, copies: int) -> tuple[bool, str | None]:
+    def print_file(self, file_path: Path, copies: int, options: dict | None = None) -> tuple[bool, str | None]:
         """打印单个文件；返回 (是否成功, 中文错误信息)。"""
         launcher = str(self.effective("launcher") or "sumatra").strip().lower()
         printer_name = str(self.effective("printer_name") or "").strip()
@@ -498,11 +532,14 @@ class PrintAgent:
             return True, None
 
         try:
-            command = self.build_sumatra_command(file_path, printer_name, copies)
+            command = self.build_sumatra_command(file_path, printer_name, copies, options)
         except PrintError as exc:
             LOG.error("%s", exc)
             return False, str(exc)
 
+        settings_text = self.build_print_settings(copies, options or {})
+        if settings_text:
+            LOG.info("应用打印设置：%s", settings_text)
         LOG.info("打印命令：%s", subprocess.list2cmdline(command))
         if dry_run:
             LOG.info("[DRY-RUN] 未实际打印：%s", file_path)
@@ -541,8 +578,9 @@ class PrintAgent:
             self.report(job_id, False, "任务没有可打印文件")
             return
 
+        options = job.get("print_options") or {}
         try:
-            copies = int(job.get("copies") or self.effective("copies") or 1)
+            copies = int(job.get("copies") or options.get("copies") or self.effective("copies") or 1)
         except (TypeError, ValueError):
             copies = 1
         copies = max(1, copies)
@@ -567,7 +605,7 @@ class PrintAgent:
                 return
 
             LOG.info("正在打印 %d/%d：%s", index, len(files), filename)
-            ok, error = self.print_file(local_path, copies)
+            ok, error = self.print_file(local_path, copies, options)
             if not ok:
                 self.report(job_id, False, "%s：%s" % (filename, error))
                 return

@@ -42,6 +42,7 @@
 | 配送方式 + 交接流转 | `backend\.venv\Scripts\python.exe .tmp-test\e2e2.py` | 26 项全通过：默认配置读写与非法值 400、默认取件时地址可空、显式配送缺地址 400、配送/取件单各自的合法流转、跨方式流转 400、越级 400、重复标记 400、普通用户调用 403、`finished_at` 落库、绑定票据一次性、未绑定账号解绑 400 |
 | 队列/配置 UI | `node .tmp-test\ui-test8.mjs` | 14 项全通过：配置页保存默认地址与默认取件、提交页按默认值预填、队列页勾选「待配送」→「已完成」（勾选后状态与时间正确）、用户侧看到新状态；页面 JS 错误 0 |
 | 绑定/解绑 UI | `node .tmp-test\ui-test9.mjs`（真实本机 anticraft 授权，自包含可重复） | 7 项全通过：A 账号绑定成功并显示 anticraft 用户 ID → B 账号绑同一 anticraft 账号被拒（提示占用者）→ A 解绑（设置本地密码）后可用新密码登录；页面 JS 错误 0 |
+| 打印设置（份数/双面/纸张/颜色/页面范围/每张页数/缩放） | `backend\.venv\Scripts\python.exe .tmp-test\print_options_test.py` | 18 项全通过：完整设置落库与回读、默认值、10 类非法值 400、代理 claim 能拿到设置、用户/管理列表都带 print_options；另用代理 `--dry-run` 验证命令行出现 `-print-settings 3x,duplexlong,paper=A3,monochrome,1-2,2,2,fit` |
 
 **测试中修掉的真 bug（勿回退）**：
 1. **代理把 `dry_run` 判断成恒真** —— 服务端下发的是字符串 `"0"`，`bool("0")` 在 Python 里是 `True`，导致代理永远只干跑却回报成功（任务被误标已打印）。已改为 `truthy()` 解析（`print_agent.py`），**任何服务端开关值都要走它**。
@@ -110,6 +111,14 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
 - 出纸后由管理员在**任务队列页**勾选交接（`POST /api/jobs/{id}/advance`，body `{to}`）：`已打印` → `待配送`（仅配送单）/ `待取件`（仅取件单）→ `已完成`（写 `finished_at`）。
 - 允许的流转集中在 `constants.HANDOVER_NEXT`（`{当前状态: {目标状态: 该目标要求的配送方式}}`），**服务端强校验**：配送单不能标「待取件」，反之亦然；重复标记、越级流转一律 400。改状态机只改这一张表 + 两端 constants。
 - 用户侧在「我的任务」看到同样的徽章与提示（待配送=等待管理员送达、待取件=到打印点自取、已完成=完成时间）。
+
+## 打印设置（提交页可选，2026-09-15 新增）
+
+- **数据**：`print_jobs.copies`（份数 1~99）+ `print_jobs.print_options`（JSON 文本，其余项）。取值**就是 SumatraPDF `-print-settings` 的原生 token**，白名单在 `constants.py`：`PRINT_DUPLEX`（simplex / duplexlong / duplexshort）、`PRINT_PAPER`（A4/A3/A5/B5/Letter/Legal）、`PRINT_NUP`（"1,1"/"2,1"/"1,2"/"2,2"/"3,3"/"4,4"，即「行,列」）、`PRINT_SCALE`（fit / noscale / shrink）、`PRINT_COLOR`（monochrome / color）、页面范围（只允许数字/逗号/短横线，≤64 字）。
+- **接口**：`POST /api/jobs` 接受 `copies/duplex/paper/pages/nup/scale/color` 表单字段（留空 = 驱动默认），服务端逐项白名单校验、非法值一律 400；任务出参与代理 `claim` 都返回解析好的 `print_options` dict（`main.py` 的 `_job_payload` 与 `agent_api.py` 的 `_parse_options`）。
+- **代理**：`PrintAgent.build_print_settings(copies, options)` 拼成一条 `-print-settings`，顺序 = 份数 → 单双面 → 纸张 → 颜色 → 页面范围 → 每张页数 → 缩放，例如 `3x,duplexlong,paper=A3,monochrome,1-3,2,2,fit`；日志会打印「应用打印设置：…」，排查「设置没生效」先看这一行。
+- **前端**：提交页「打印设置」卡片用 `constants.ts` 的 `DUPLEX_OPTIONS/PAPER_OPTIONS/NUP_OPTIONS/SCALE_OPTIONS/COLOR_OPTIONS` 渲染；摘要文案统一用 `describePrintOptions(job.print_options, job.copies)`（我的任务、任务队列、提交成功卡片三处共用）。
+- **机型限制**：目标机 P1106 是**黑白**激光、无自动双面单元；彩色/双面照常下发给驱动，超出机型能力时由驱动忽略或按手动双面处理——界面与文档都注明了这一点。
 
 ## 数据库（MySQL 8）
 

@@ -10,6 +10,7 @@ import {
   MapPin,
   PackageOpen,
   Paperclip,
+  Printer,
   RefreshCw,
   Truck,
 } from 'lucide-react'
@@ -24,6 +25,7 @@ import {
   STATUS_AWAIT_PICKUP,
   STATUS_DONE,
   STATUS_REJECTED,
+  describePrintOptions,
   formatTime,
   statusBadge,
 } from '../constants'
@@ -171,6 +173,13 @@ function MyJobsPage() {
                     <FileChips
                       files={job.files.map((file) => ({ name: file.filename, size: file.size }))}
                     />
+                  </dd>
+                </div>
+                <div className="flex flex-wrap gap-x-3 gap-y-1">
+                  <dt className="w-24 shrink-0 text-gray-400">打印设置</dt>
+                  <dd className="flex min-w-0 flex-1 items-center gap-1.5 text-gray-700 dark:text-gray-200">
+                    <Printer className="h-4 w-4 shrink-0 text-gray-400" />
+                    {describePrintOptions(job.print_options, job.copies)}
                   </dd>
                 </div>
                 <div className="flex flex-wrap gap-x-3 gap-y-1">

@@ -7,6 +7,7 @@ import { api, getErrorMessage } from '../api'
 import { formatSize } from '../components/FileChips'
 import Modal from '../components/Modal'
 import {
+  describePrintOptions,
   BADGE_BASE,
   DELIVER,
   PICKUP,
@@ -357,6 +358,7 @@ function QueuePage() {
                   <th className={TH}>提交人</th>
                   <th className={TH}>文件</th>
                   <th className={TH}>配送方式</th>
+                  <th className={TH}>打印设置</th>
                   <th className={TH}>配送地址</th>
                   <th className={TH}>状态</th>
                   <th className={TH}>提交时间</th>
@@ -398,6 +400,9 @@ function QueuePage() {
                       </td>
                       <td className={TD}>
                         <span className={MODE_BADGE[job.delivery_mode]}>{job.delivery_mode}</span>
+                      </td>
+                      <td className={`${TD} max-w-[180px] text-xs text-gray-500 dark:text-gray-400`}>
+                        {describePrintOptions(job.print_options, job.copies)}
                       </td>
                       <td className={`${TD} max-w-[240px] break-words`}>
                         {job.address.trim() ? (

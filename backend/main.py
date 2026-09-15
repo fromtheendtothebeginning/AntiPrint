@@ -5,6 +5,7 @@ import json
 import logging
 import mimetypes
 import os
+import re
 import secrets
 import shutil
 import sys
@@ -153,6 +154,71 @@ def _content_disposition(kind: str, filename: str) -> str:
     """文件名给 ASCII 兜底 + RFC 5987 编码，兼容中文名"""
     fallback = filename.encode("ascii", "ignore").decode().replace('"', "") or "file"
     return f"{kind}; filename=\"{fallback}\"; filename*=UTF-8''{quote(filename)}"
+
+
+PRINT_OPTION_FIELDS = ("copies", "duplex", "paper", "pages", "nup", "scale", "color")
+
+
+def _parse_print_options(raw) -> dict:
+    """把库里存的 JSON 文本解析成 dict；解析失败返回空 dict（老数据没有该字段）"""
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    parsed = {k: v for k, v in data.items() if k in PRINT_OPTION_FIELDS and v not in (None, "")}
+    if "copies" in parsed:
+        try:
+            parsed["copies"] = int(parsed["copies"])
+        except (TypeError, ValueError):
+            parsed.pop("copies", None)
+    return parsed
+
+
+def _build_print_options(duplex: str, paper: str, pages: str, nup: str, scale: str, color: str) -> dict:
+    """校验提交页传来的打印设置，返回可直接存库的 dict（空值表示用打印机/驱动默认）。
+
+    取值必须是白名单里的 SumatraPDF 参数；页面范围只允许数字、逗号、短横线。
+    """
+    options = {}
+    if duplex:
+        if duplex not in constants.PRINT_DUPLEX:
+            raise HTTPException(status_code=400, detail="双面设置不正确")
+        options["duplex"] = duplex
+    if paper:
+        if paper not in constants.PRINT_PAPER:
+            raise HTTPException(status_code=400, detail="纸张大小不正确")
+        options["paper"] = paper
+    if nup:
+        if nup not in constants.PRINT_NUP:
+            raise HTTPException(status_code=400, detail="每面页数设置不正确")
+        options["nup"] = nup
+    if scale:
+        if scale not in constants.PRINT_SCALE:
+            raise HTTPException(status_code=400, detail="缩放设置不正确")
+        options["scale"] = scale
+    if color:
+        if color not in constants.PRINT_COLOR:
+            raise HTTPException(status_code=400, detail="颜色设置不正确")
+        options["color"] = color
+    pages = (pages or "").strip()
+    if pages:
+        if len(pages) > constants.PAGE_RANGE_MAX_LEN or not re.fullmatch(r"[0-9,\-\s]+", pages):
+            raise HTTPException(status_code=400, detail="页面范围格式不正确（示例：1-3,5）")
+        options["pages"] = pages
+    return options
+
+
+def _job_payload(job):
+    """任务出参：把 print_options 从 JSON 文本解析成 dict（前端/代理直接可用）"""
+    if not job:
+        return job
+    payload = dict(job)
+    payload["print_options"] = _parse_print_options(job.get("print_options"))
+    return payload
 
 
 def _load_job_for(job_id: int, user: dict) -> dict:
@@ -749,6 +815,13 @@ def create_job(
     address: str = Form(default=""),
     note: str = Form(default=""),
     delivery_mode: str = Form(default=""),
+    copies: str = Form(default="1"),
+    duplex: str = Form(default=""),
+    paper: str = Form(default=""),
+    pages: str = Form(default=""),
+    nup: str = Form(default=""),
+    scale: str = Form(default=""),
+    color: str = Form(default=""),
     files: list[UploadFile] = File(default=[]),
     user: dict = Depends(auth.get_current_user),
 ):
@@ -769,6 +842,15 @@ def create_job(
     note = (note or "").strip()
     if len(note) > 500:
         raise HTTPException(status_code=400, detail="备注过长（最多 500 字）")
+
+    try:
+        copies_value = int((str(copies or "1").strip() or "1"))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="份数必须是整数")
+    if not 1 <= copies_value <= constants.PRINT_COPIES_MAX:
+        raise HTTPException(status_code=400, detail=f"份数需在 1~{constants.PRINT_COPIES_MAX} 之间")
+    options = _build_print_options(duplex, paper, pages, nup, scale, color)
+    options["copies"] = copies_value
 
     uploads = [f for f in (files or []) if (f.filename or "").strip()]
     if not uploads:
@@ -819,7 +901,10 @@ def create_job(
         if not saved:
             raise HTTPException(status_code=400, detail="没有有效文件可提交")
 
-        job = db.create_job(user["id"], address, note, saved, mode)
+        job = db.create_job(
+            user["id"], address, note, saved, mode, copies_value,
+            json.dumps(options, ensure_ascii=False),
+        )
         dest_dir = config.UPLOAD_DIR / str(job["id"])
         # 任务号来自自增主键，正常不会重名；但历史上出现过（把本机 uploads 传上服务器）
         # 残留同名目录，导致 rename 报 Errno 39 Directory not empty。残留目录不属于任何任务，清掉再落盘。
@@ -833,10 +918,10 @@ def create_job(
             logger.error("任务 #%s 文件落盘失败：%s", job["id"], exc)
             raise HTTPException(status_code=500, detail="文件保存失败，请重试")
         logger.info(
-            "用户 %s 提交任务 #%s（%s 个文件，%s，地址：%s）",
-            user["username"], job["id"], len(saved), mode, address or "（取件）",
+            "用户 %s 提交任务 #%s（%s 个文件，%s，份数 %s，打印设置 %s，地址：%s）",
+            user["username"], job["id"], len(saved), mode, copies_value, options, address or "（取件）",
         )
-        return {"job": db.get_job(job["id"])}
+        return {"job": _job_payload(db.get_job(job["id"]))}
     except HTTPException:
         shutil.rmtree(tmp_dir, ignore_errors=True)
         raise
@@ -849,19 +934,19 @@ def create_job(
 @app.get("/api/jobs/mine")
 def my_jobs(user: dict = Depends(auth.get_current_user)):
     """我的任务（倒序，含文件列表）"""
-    return {"jobs": db.list_jobs(user["id"])}
+    return {"jobs": [_job_payload(j) for j in db.list_jobs(user["id"])]}
 
 
 @app.get("/api/jobs")
 def all_jobs(user: dict = Depends(auth.require_admin)):
     """管理端任务队列 + 代理列表 + 代理在线状态"""
     agents = db.list_agents()
-    return {"jobs": db.list_jobs(), "agents": agents, "agent_online": _agent_online(agents)}
+    return {"jobs": [_job_payload(j) for j in db.list_jobs()], "agents": agents, "agent_online": _agent_online(agents)}
 
 
 @app.get("/api/jobs/{job_id}")
 def job_detail(job_id: int, user: dict = Depends(auth.get_current_user)):
-    return {"job": _load_job_for(job_id, user)}
+    return {"job": _job_payload(_load_job_for(job_id, user))}
 
 
 @app.get("/api/jobs/{job_id}/files/{file_id}")
@@ -888,7 +973,7 @@ def approve(job_id: int, user: dict = Depends(auth.require_admin)):
     )
     if not ok:
         raise HTTPException(status_code=409, detail="任务状态已变化，请刷新后重试")
-    return {"job": db.get_job(job_id)}
+    return {"job": _job_payload(db.get_job(job_id))}
 
 
 @app.post("/api/jobs/{job_id}/reject")
@@ -906,7 +991,7 @@ def reject(job_id: int, body: RejectBody, user: dict = Depends(auth.require_admi
     )
     if not ok:
         raise HTTPException(status_code=409, detail="任务状态已变化，请刷新后重试")
-    return {"job": db.get_job(job_id)}
+    return {"job": _job_payload(db.get_job(job_id))}
 
 
 @app.post("/api/jobs/{job_id}/resubmit")
@@ -925,7 +1010,7 @@ def resubmit(job_id: int, user: dict = Depends(auth.get_current_user)):
     )
     if not ok:
         raise HTTPException(status_code=409, detail="任务状态已变化，请刷新后重试")
-    return {"job": db.get_job(job_id)}
+    return {"job": _job_payload(db.get_job(job_id))}
 
 
 @app.post("/api/jobs/{job_id}/retry")
@@ -940,7 +1025,7 @@ def retry(job_id: int, user: dict = Depends(auth.require_admin)):
     )
     if not ok:
         raise HTTPException(status_code=409, detail="任务状态已变化，请刷新后重试")
-    return {"job": db.get_job(job_id)}
+    return {"job": _job_payload(db.get_job(job_id))}
 
 
 @app.post("/api/jobs/{job_id}/advance")
@@ -972,7 +1057,7 @@ def advance(job_id: int, body: AdvanceBody, user: dict = Depends(auth.require_ad
     if not ok:
         raise HTTPException(status_code=409, detail="任务状态已变化，请刷新后重试")
     logger.info("管理员 %s 将任务 #%s 标记为「%s」", user["username"], job_id, target)
-    return {"job": db.get_job(job_id)}
+    return {"job": _job_payload(db.get_job(job_id))}
 
 
 @app.delete("/api/jobs/{job_id}")

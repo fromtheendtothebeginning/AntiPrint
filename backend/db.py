@@ -40,6 +40,7 @@ TABLES = {
         ("agent_id", "INT NULL"),
         ("copies", "INT NOT NULL DEFAULT 1"),
         ("delivery_mode", "VARCHAR(8) NOT NULL DEFAULT '配送'"),
+        ("print_options", "VARCHAR(255) NULL"),
         ("claimed_at", "DATETIME NULL"),
         ("printed_at", "DATETIME NULL"),
         ("finished_at", "DATETIME NULL"),
@@ -85,7 +86,7 @@ USER_FIELDS = (
 )
 JOB_FIELDS = (
     "id", "user_id", "username", "status", "address", "note", "reject_reason", "print_error",
-    "agent_id", "copies", "delivery_mode", "claimed_at", "printed_at", "finished_at",
+    "agent_id", "copies", "delivery_mode", "print_options", "claimed_at", "printed_at", "finished_at",
     "created_at", "updated_at",
 )
 FILE_FIELDS = ("id", "job_id", "filename", "stored_name", "size", "sha256", "created_at")
@@ -313,17 +314,19 @@ def _load_files(cur, job_ids):
     return grouped
 
 
-def create_job(user_id, address, note, files, delivery_mode=DELIVER):
+def create_job(user_id, address, note, files, delivery_mode=DELIVER, copies=1, print_options=None):
     """创建打印任务：写 print_jobs + print_job_files + 一条建单日志。
 
     files 为已落盘的元数据列表：[{filename, stored_name, size, sha256}, ...]
     delivery_mode: 配送 / 取件（取件时 address 可为空串）
+    copies: 份数（同时写进 copies 列与 print_options，代理侧直接用 print_options 拼命令行）
+    print_options: 打印设置的 JSON 文本（双面/纸张/页面范围/每面页数/缩放），可为 None
     """
     with tx() as cur:
         cur.execute(
-            "INSERT INTO print_jobs (user_id, status, address, note, copies, delivery_mode, created_at, updated_at) "
-            "VALUES (%s,%s,%s,%s,1,%s,NOW(),NOW())",
-            (user_id, S_PENDING, address, note or None, delivery_mode),
+            "INSERT INTO print_jobs (user_id, status, address, note, copies, delivery_mode, print_options, created_at, updated_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())",
+            (user_id, S_PENDING, address, note or None, copies, delivery_mode, print_options),
         )
         job_id = cur.lastrowid
         for item in files:

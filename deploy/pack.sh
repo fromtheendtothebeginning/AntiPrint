@@ -40,7 +40,10 @@ echo "[2/5] 上传到 $SERVER"
 scp -q "$PKG" "$SERVER:/tmp/"
 
 echo "[3/5] 解包到 $REMOTE_DIR（保留线上 db_config.json 与 data）"
-ssh "$SERVER" "tar xzf /tmp/antiprint-deploy.tar.gz -C $REMOTE_DIR && ls $REMOTE_DIR/frontend/dist/assets | head -3"
+ssh "$SERVER" "tar xzf /tmp/antiprint-deploy.tar.gz -C $REMOTE_DIR && ls $REMOTE_DIR/frontend/dist/assets | head -3
+# 清理上次构建残留的资源（只保留 index.html 引用到的），避免 dist/assets 越积越多
+cd $REMOTE_DIR/frontend/dist/assets
+for f in \$(ls -1); do grep -q \"\$f\" ../index.html || { rm -f \"\$f\"; echo \"  已删未引用资源 \$f\"; }; done"
 
 echo "[4/5] 重启 $SERVICE"
 ssh "$SERVER" "systemctl restart $SERVICE && sleep 6 && systemctl is-active $SERVICE"

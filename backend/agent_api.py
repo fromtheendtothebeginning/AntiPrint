@@ -2,6 +2,7 @@
 # 代理协议：注册 → 心跳（顺带取配置）→ 轮询领取 → 下载文件 → 回报结果。
 
 import hmac
+import json
 import logging
 import mimetypes
 import os
@@ -57,8 +58,19 @@ def _upsert_report(body: AgentReport):
     return agent
 
 
+def _parse_options(raw) -> dict:
+    """把 print_options 的 JSON 文本解析成 dict（老任务没有该字段时返回空 dict）"""
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def _job_payload(job):
-    """代理视角的任务结构（文件给下载 url，不给本地路径）"""
+    """代理视角的任务结构（文件给下载 url 不给本地路径；打印设置解析成 dict 供拼命令行）"""
     if not job:
         return None
     return {
@@ -66,6 +78,7 @@ def _job_payload(job):
         "address": job["address"],
         "note": job["note"],
         "copies": job["copies"],
+        "print_options": _parse_options(job.get("print_options")),
         "files": [
             {
                 "id": item["id"],
