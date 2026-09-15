@@ -12,9 +12,11 @@ interface DropZoneProps {
   multiple?: boolean
   /** 区域下方的提示文案（格式要求、数量限制等） */
   hint?: string
+  /** 传入时已选文件名可点击预览（提交前预览用） */
+  onPreview?: (index: number) => void
 }
 
-function DropZone({ files, onChange, accept, multiple = true, hint }: DropZoneProps) {
+function DropZone({ files, onChange, accept, multiple = true, hint, onPreview }: DropZoneProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragging, setDragging] = useState(false)
 
@@ -92,6 +94,7 @@ function DropZone({ files, onChange, accept, multiple = true, hint }: DropZonePr
       <FileChips
         files={files}
         onRemove={(index) => onChange(files.filter((_, current) => current !== index))}
+        onPreview={onPreview}
       />
     </div>
   )

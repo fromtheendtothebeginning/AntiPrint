@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 import { api, getErrorMessage } from '../api'
 import FileChips from '../components/FileChips'
+import FilePreview from '../components/FilePreview'
 import Modal from '../components/Modal'
 import TextField from '../components/TextField'
 import {
@@ -56,6 +57,8 @@ function MyJobsPage() {
   const [note, setNote] = useState('')
   const [modalError, setModalError] = useState('')
   const [busy, setBusy] = useState(false)
+  /** 正在预览的文件（点文件名打开，PDF/图片走同源鉴权接口取 blob） */
+  const [preview, setPreview] = useState<{ jobId: number; fileId: number; filename: string } | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -172,6 +175,10 @@ function MyJobsPage() {
                   <dd className="min-w-0 flex-1">
                     <FileChips
                       files={job.files.map((file) => ({ name: file.filename, size: file.size }))}
+                      onPreview={(index) => {
+                        const file = job.files[index]
+                        if (file) setPreview({ jobId: job.id, fileId: file.id, filename: file.filename })
+                      }}
                     />
                   </dd>
                 </div>
@@ -325,6 +332,15 @@ function MyJobsPage() {
           )}
         </div>
       </Modal>
+
+      {/* 文件预览：点文件名即可看自己的上传件（PDF iframe / 图片 img，接口带鉴权取 blob） */}
+      <FilePreview
+        open={preview !== null}
+        jobId={preview?.jobId}
+        fileId={preview?.fileId}
+        filename={preview?.filename ?? ''}
+        onClose={() => setPreview(null)}
+      />
     </div>
   )
 }

@@ -1,5 +1,5 @@
 // 已选文件 chip 列表：文件名 + 大小格式化 + 可选删除按钮
-import { FileText, Trash2 } from 'lucide-react'
+import { Eye, FileText, Trash2 } from 'lucide-react'
 
 /** 只依赖文件名与大小，File 与后端 JobFile 都能直接适配 */
 export interface FileItem {
@@ -11,6 +11,8 @@ interface FileChipsProps {
   files: FileItem[]
   /** 传入时每个 chip 显示删除按钮 */
   onRemove?: (index: number) => void
+  /** 传入时文件名为可点击的预览按钮 */
+  onPreview?: (index: number) => void
   disabled?: boolean
 }
 
@@ -22,7 +24,7 @@ export function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
 }
 
-function FileChips({ files, onRemove, disabled = false }: FileChipsProps) {
+function FileChips({ files, onRemove, onPreview, disabled = false }: FileChipsProps) {
   if (files.length === 0) return null
   return (
     <ul className="flex flex-wrap gap-2">
@@ -32,12 +34,26 @@ function FileChips({ files, onRemove, disabled = false }: FileChipsProps) {
           className="flex max-w-full items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs dark:border-white/10 dark:bg-white/5"
         >
           <FileText className="h-4 w-4 shrink-0 text-brand-dark dark:text-brand" />
-          <span
-            className="min-w-0 truncate font-medium text-gray-700 dark:text-gray-200"
-            title={file.name}
-          >
-            {file.name}
-          </span>
+          {onPreview ? (
+            <button
+              type="button"
+              className="flex min-w-0 items-center gap-1.5 rounded-lg px-1 py-0.5 font-medium text-gray-700 transition-colors hover:bg-brand/10 hover:text-brand-dark disabled:cursor-not-allowed disabled:opacity-50 dark:text-gray-200 dark:hover:text-brand"
+              title="点击预览"
+              aria-label={`预览 ${file.name}`}
+              disabled={disabled}
+              onClick={() => onPreview(index)}
+            >
+              <Eye className="h-3.5 w-3.5 shrink-0" />
+              <span className="min-w-0 truncate">{file.name}</span>
+            </button>
+          ) : (
+            <span
+              className="min-w-0 truncate font-medium text-gray-700 dark:text-gray-200"
+              title={file.name}
+            >
+              {file.name}
+            </span>
+          )}
           <span className="shrink-0 text-gray-400">{formatSize(file.size)}</span>
           {onRemove && (
             <button

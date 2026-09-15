@@ -8,6 +8,7 @@ import { api, getErrorMessage } from '../api'
 import DropZone from '../components/DropZone'
 import TextField from '../components/TextField'
 import FileChips from '../components/FileChips'
+import FilePreview from '../components/FilePreview'
 import {
   DELIVER,
   NUP_OPTIONS,
@@ -47,6 +48,8 @@ function SubmitPage() {
   const [fromProfile, setFromProfile] = useState(false)
   /** 用户已手动改过表单：默认值只在未改动时回填，避免覆盖已输入的内容 */
   const touchedRef = useRef(false)
+  /** 提交前预览所选文件：本地 objectURL（本页负责创建与回收） */
+  const [localPreview, setLocalPreview] = useState<{ url: string; name: string } | null>(null)
 
   // 进入页面读取「我的配置」的默认配送方式与默认地址；读取失败静默忽略，不阻断提交
   useEffect(() => {
@@ -184,7 +187,8 @@ function SubmitPage() {
   }
 
   return (
-    <form className="grid items-start gap-5 md:grid-cols-2" onSubmit={handleSubmit}>
+    <>
+      <form className="grid items-start gap-5 md:grid-cols-2" onSubmit={handleSubmit}>
       <section className="rounded-2xl bg-white p-6 shadow-xl shadow-black/[0.04] dark:bg-ink-soft">
         <div className="mb-4 flex items-center gap-3">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand-dark dark:text-brand">
@@ -197,7 +201,15 @@ function SubmitPage() {
           onChange={handleFiles}
           accept={ACCEPT}
           multiple
-          hint="支持 PDF / 图片，单文件 ≤10MB，最多 5 个"
+          hint="支持 PDF / 图片，单文件 ≤10MB，最多 5 个；点文件名可先预览"
+          onPreview={(index) => {
+            const file = files[index]
+            if (!file) return
+            setLocalPreview((prev) => {
+              if (prev) URL.revokeObjectURL(prev.url)
+              return { url: URL.createObjectURL(file), name: file.name }
+            })
+          }}
         />
       </section>
 
@@ -394,7 +406,21 @@ function SubmitPage() {
           )}
         </button>
       </section>
-    </form>
+      </form>
+
+      {/* 提交前本地预览：文件尚未上传，直接用浏览器的临时地址看 */}
+      <FilePreview
+        open={localPreview !== null}
+        filename={localPreview?.name ?? ''}
+        localUrl={localPreview?.url}
+        onClose={() => {
+          setLocalPreview((prev) => {
+            if (prev) URL.revokeObjectURL(prev.url)
+            return null
+          })
+        }}
+      />
+    </>
   )
 }
 
