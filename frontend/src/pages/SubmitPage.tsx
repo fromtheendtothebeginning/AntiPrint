@@ -201,6 +201,7 @@ function SubmitPage() {
           onChange={handleFiles}
           accept={ACCEPT}
           multiple
+          previewInline
           hint="支持 PDF / 图片，单文件 ≤10MB，最多 5 个；点文件名可先预览"
           onPreview={(index) => {
             const file = files[index]
