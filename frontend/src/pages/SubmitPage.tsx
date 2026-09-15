@@ -9,9 +9,7 @@ import DropZone from '../components/DropZone'
 import TextField from '../components/TextField'
 import FileChips from '../components/FileChips'
 import {
-  COLOR_OPTIONS,
   DELIVER,
-  DUPLEX_OPTIONS,
   NUP_OPTIONS,
   PAPER_OPTIONS,
   PICKUP,
@@ -38,12 +36,10 @@ function SubmitPage() {
   const [note, setNote] = useState('')
   // 打印设置：默认给确定值（单面 / A4 / 黑白 / 1 页每张 / 适应纸张 / 1 份），不依赖驱动默认
   const [copies, setCopies] = useState('1')
-  const [duplex, setDuplex] = useState('simplex')
   const [paper, setPaper] = useState('A4')
   const [pages, setPages] = useState('')
   const [nup, setNup] = useState('1,1')
   const [scale, setScale] = useState('fit')
-  const [color, setColor] = useState('monochrome')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [created, setCreated] = useState<Job | null>(null)
@@ -105,11 +101,9 @@ function SubmitPage() {
     formData.append('delivery_mode', mode)
     formData.append('address', trimmedAddress)
     formData.append('copies', copies || '1')
-    formData.append('duplex', duplex)
     formData.append('paper', paper)
     formData.append('nup', nup)
     formData.append('scale', scale)
-    formData.append('color', color)
     if (pages.trim()) formData.append('pages', pages.trim())
     if (note.trim()) formData.append('note', note.trim())
     for (const file of files) formData.append('files', file)
@@ -266,21 +260,6 @@ function SubmitPage() {
               />
             </label>
             <label className="block">
-              <span className="mb-1 block text-xs text-gray-500 dark:text-gray-400">单/双面</span>
-              <select
-                className={SELECT_CLASS}
-                value={duplex}
-                disabled={submitting}
-                onChange={(event) => setDuplex(event.target.value)}
-              >
-                {DUPLEX_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block">
               <span className="mb-1 block text-xs text-gray-500 dark:text-gray-400">纸张大小</span>
               <select
                 className={SELECT_CLASS}
@@ -291,21 +270,6 @@ function SubmitPage() {
                 {PAPER_OPTIONS.map((value) => (
                   <option key={value} value={value}>
                     {value}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block">
-              <span className="mb-1 block text-xs text-gray-500 dark:text-gray-400">颜色</span>
-              <select
-                className={SELECT_CLASS}
-                value={color}
-                disabled={submitting}
-                onChange={(event) => setColor(event.target.value)}
-              >
-                {COLOR_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
                   </option>
                 ))}
               </select>
@@ -352,7 +316,7 @@ function SubmitPage() {
             </label>
           </div>
           <p className="mt-3 text-xs text-gray-400">
-            以上设置对本次任务的所有文件生效；本机打印机为黑白激光（A4），超出机型能力的选项由驱动自行处理
+            以上设置对本次任务的所有文件生效；本机打印机为黑白激光、无自动双面（A4）
           </p>
         </div>
 

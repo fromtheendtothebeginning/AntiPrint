@@ -61,12 +61,7 @@ export const ROLE_LABEL: Record<string, string> = {
   root: '超级管理员',
 }
 
-// ── 打印设置（与 backend/constants.py 的白名单一一对应）──
-export const DUPLEX_OPTIONS = [
-  { value: 'simplex', label: '单面' },
-  { value: 'duplexlong', label: '双面（长边翻转）' },
-  { value: 'duplexshort', label: '双面（短边翻转）' },
-]
+// ── 打印设置（与 backend/constants.py 的白名单一一对应；双面/彩色因机型不支持已移除）──
 export const PAPER_OPTIONS = ['A4', 'A3', 'A5', 'B5', 'Letter', 'Legal']
 export const NUP_OPTIONS = [
   { value: '1,1', label: '1 页/张' },
@@ -81,14 +76,8 @@ export const SCALE_OPTIONS = [
   { value: 'noscale', label: '实际大小' },
   { value: 'shrink', label: '缩小到可打印区域' },
 ]
-export const COLOR_OPTIONS = [
-  { value: 'monochrome', label: '黑白' },
-  { value: 'color', label: '彩色（本机为黑白打印机时仍按黑白出纸）' },
-]
 
-const DUPLEX_LABEL: Record<string, string> = Object.fromEntries(DUPLEX_OPTIONS.map((o) => [o.value, o.label]))
 const SCALE_LABEL: Record<string, string> = Object.fromEntries(SCALE_OPTIONS.map((o) => [o.value, o.label]))
-const COLOR_LABEL: Record<string, string> = Object.fromEntries(COLOR_OPTIONS.map((o) => [o.value, o.label]))
 
 /** 把任务的打印设置汇总成一行中文（任务列表 / 成功卡片共用；无设置时给「默认」说明） */
 export function describePrintOptions(options?: PrintOptions | null, copies?: number): string {
@@ -96,9 +85,7 @@ export function describePrintOptions(options?: PrintOptions | null, copies?: num
   const parts: string[] = []
   const total = copies ?? o.copies ?? 1
   if (Number(total) > 1) parts.push(`${total} 份`)
-  if (o.duplex && DUPLEX_LABEL[o.duplex]) parts.push(DUPLEX_LABEL[o.duplex])
   if (o.paper) parts.push(o.paper)
-  if (o.color && COLOR_LABEL[o.color]) parts.push(o.color === 'color' ? '彩色' : '黑白')
   if (o.pages) parts.push(`第 ${o.pages} 页`)
   if (o.nup && o.nup !== '1,1') {
     const [rows, cols] = o.nup.split(',').map((n) => Number(n) || 1)

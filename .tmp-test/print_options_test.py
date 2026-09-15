@@ -36,13 +36,13 @@ settings = requests.get(f"{BASE}/api/settings", headers={"Authorization": "Beare
 AGENT = settings["agent_token"]
 
 print("\n1. 完整打印设置提交")
-r = submit(UT, copies="2", duplex="duplexlong", paper="A3", pages="1-2", nup="2,2", scale="fit", color="monochrome")
+r = submit(UT, copies="2", paper="A3", pages="1-2", nup="2,2", scale="fit")
 job = r.json().get("job", {}) if r.status_code == 200 else {}
 check("提交成功", r.status_code == 200, f"{r.status_code} {r.text[:80]}")
 check("份数落库", job.get("copies") == 2, str(job.get("copies")))
 opts = job.get("print_options") or {}
-check("打印设置解析成 dict", opts.get("duplex") == "duplexlong" and opts.get("paper") == "A3" and opts.get("pages") == "1-2"
-      and opts.get("nup") == "2,2" and opts.get("scale") == "fit" and opts.get("color") == "monochrome", str(opts))
+check("打印设置解析成 dict", opts.get("paper") == "A3" and opts.get("pages") == "1-2"
+      and opts.get("nup") == "2,2" and opts.get("scale") == "fit" and "duplex" not in opts and "color" not in opts, str(opts))
 jid = job.get("id")
 
 print("\n2. 默认值（不传设置时）")
@@ -55,11 +55,9 @@ for field, value, label in (
     ("copies", "0", "份数 0"),
     ("copies", "100", "份数 100"),
     ("copies", "abc", "份数非数字"),
-    ("duplex", "duplex", "非法双面值"),
     ("paper", "A2", "非法纸张"),
     ("nup", "5,5", "非法每面页数"),
     ("scale", "huge", "非法缩放"),
-    ("color", "rainbow", "非法颜色"),
     ("pages", "abc", "非法页面范围"),
     ("pages", "1;" * 40, "超长页面范围"),
 ):

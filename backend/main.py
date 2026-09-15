@@ -156,7 +156,7 @@ def _content_disposition(kind: str, filename: str) -> str:
     return f"{kind}; filename=\"{fallback}\"; filename*=UTF-8''{quote(filename)}"
 
 
-PRINT_OPTION_FIELDS = ("copies", "duplex", "paper", "pages", "nup", "scale", "color")
+PRINT_OPTION_FIELDS = ("copies", "paper", "pages", "nup", "scale")
 
 
 def _parse_print_options(raw) -> dict:
@@ -178,16 +178,13 @@ def _parse_print_options(raw) -> dict:
     return parsed
 
 
-def _build_print_options(duplex: str, paper: str, pages: str, nup: str, scale: str, color: str) -> dict:
+def _build_print_options(paper: str, pages: str, nup: str, scale: str) -> dict:
     """校验提交页传来的打印设置，返回可直接存库的 dict（空值表示用打印机/驱动默认）。
 
     取值必须是白名单里的 SumatraPDF 参数；页面范围只允许数字、逗号、短横线。
+    双面/彩色不在支持范围内（目标机型为黑白激光、无自动双面单元）。
     """
     options = {}
-    if duplex:
-        if duplex not in constants.PRINT_DUPLEX:
-            raise HTTPException(status_code=400, detail="双面设置不正确")
-        options["duplex"] = duplex
     if paper:
         if paper not in constants.PRINT_PAPER:
             raise HTTPException(status_code=400, detail="纸张大小不正确")
@@ -200,10 +197,6 @@ def _build_print_options(duplex: str, paper: str, pages: str, nup: str, scale: s
         if scale not in constants.PRINT_SCALE:
             raise HTTPException(status_code=400, detail="缩放设置不正确")
         options["scale"] = scale
-    if color:
-        if color not in constants.PRINT_COLOR:
-            raise HTTPException(status_code=400, detail="颜色设置不正确")
-        options["color"] = color
     pages = (pages or "").strip()
     if pages:
         if len(pages) > constants.PAGE_RANGE_MAX_LEN or not re.fullmatch(r"[0-9,\-\s]+", pages):
@@ -816,12 +809,10 @@ def create_job(
     note: str = Form(default=""),
     delivery_mode: str = Form(default=""),
     copies: str = Form(default="1"),
-    duplex: str = Form(default=""),
     paper: str = Form(default=""),
     pages: str = Form(default=""),
     nup: str = Form(default=""),
     scale: str = Form(default=""),
-    color: str = Form(default=""),
     files: list[UploadFile] = File(default=[]),
     user: dict = Depends(auth.get_current_user),
 ):
@@ -849,7 +840,7 @@ def create_job(
         raise HTTPException(status_code=400, detail="份数必须是整数")
     if not 1 <= copies_value <= constants.PRINT_COPIES_MAX:
         raise HTTPException(status_code=400, detail=f"份数需在 1~{constants.PRINT_COPIES_MAX} 之间")
-    options = _build_print_options(duplex, paper, pages, nup, scale, color)
+    options = _build_print_options(paper, pages, nup, scale)
     options["copies"] = copies_value
 
     uploads = [f for f in (files or []) if (f.filename or "").strip()]

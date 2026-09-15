@@ -25,11 +25,11 @@ PICKUP = "取件"       # 用户自己来取
 DELIVERY_MODES = (DELIVER, PICKUP)
 
 # ── 打印设置（提交页可选；取值直接对应 SumatraPDF -print-settings 的参数，代理侧原样拼进命令）──
-PRINT_DUPLEX = ("simplex", "duplexlong", "duplexshort")      # 单面 / 双面（长边翻转）/ 双面（短边翻转）
+# 注：目标机型 HP LaserJet Professional P1106 是黑白激光、无自动双面单元，
+#     因此不提供「双面」「彩色」选项（2026-09-15 按用户要求移除）。
 PRINT_PAPER = ("A4", "A3", "A5", "B5", "Letter", "Legal")    # 纸张大小
 PRINT_NUP = ("1,1", "2,1", "1,2", "2,2", "3,3", "4,4")       # 每张纸排几页（行,列）
 PRINT_SCALE = ("fit", "noscale", "shrink")                   # 适应纸张 / 实际大小 / 缩小到可打印区域
-PRINT_COLOR = ("monochrome", "color")                        # 黑白 / 彩色（目标机型 P1106 为黑白）
 PRINT_COPIES_MAX = 99
 PAGE_RANGE_MAX_LEN = 64                                      # 页面范围形如 1-3,5,8-
 

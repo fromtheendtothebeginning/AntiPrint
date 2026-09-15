@@ -459,22 +459,17 @@ class PrintAgent:
     def build_print_settings(copies: int, options: dict) -> str:
         """把任务里的打印设置拼成 SumatraPDF `-print-settings` 的参数串。
 
-        顺序：份数 → 单双面 → 纸张 → 颜色 → 页面范围 → 每面页数 → 缩放。
+        顺序：份数 → 纸张 → 页面范围 → 每面页数 → 缩放。
+        注：目标机型是黑白激光、无自动双面单元，因此不支持双面/彩色（2026-09-15 移除）。
         取值都是提交页白名单里的 SumatraPDF 原生 token（服务端已校验），这里只做拼装。
         """
         options = options or {}
         parts = []
         if int(copies or 1) > 1:
             parts.append("%dx" % int(copies))
-        duplex = str(options.get("duplex") or "")
-        if duplex in ("simplex", "duplexlong", "duplexshort"):
-            parts.append(duplex)
         paper = str(options.get("paper") or "")
         if paper:
             parts.append("paper=%s" % paper)
-        color = str(options.get("color") or "")
-        if color in ("monochrome", "color"):
-            parts.append(color)
         pages = str(options.get("pages") or "").strip()
         if pages:
             parts.append(pages)
