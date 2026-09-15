@@ -486,6 +486,27 @@ class PrintAgent:
         LOG.info("已下载文件 %s（%d 字节）", dest, written)
         return dest
 
+    def download_cover(self, job_id, cover_url: str) -> Path:
+        """下载任务信息页 PDF 到 agent/tmp/<job_id>/任务信息.pdf（每次领取都重新取，时间才是当下的）"""
+        dest_dir = TMP_DIR / str(job_id)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / "任务信息.pdf"
+        response = self._request("GET", self.server + cover_url, stream=True)
+        if response.status_code >= 400:
+            raise requests.HTTPError(
+                "下载任务信息页失败，服务端返回 %s" % response.status_code, response=response
+            )
+        written = 0
+        with open(dest, "wb") as fh:
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                if chunk:
+                    fh.write(chunk)
+                    written += len(chunk)
+        if written < 100 or open(dest, "rb").read(4) != b"%PDF":
+            raise requests.RequestException("任务信息页不是有效的 PDF（%d 字节）" % written)
+        LOG.info("已下载任务信息页 %s（%d 字节）", dest, written)
+        return dest
+
     def report(self, job_id, ok: bool, error: str | None = None) -> bool:
         """回报结果。
 
@@ -636,6 +657,21 @@ class PrintAgent:
         except (TypeError, ValueError):
             copies = 1
         copies = max(1, copies)
+
+        # 先出「任务信息页」（默认开；管理设置里 cover_page=0 可关）：一页纸写清给谁、打的什么
+        if truthy(self.effective("cover_page")) and job.get("cover_url"):
+            try:
+                cover_path = self.download_cover(job_id, job["cover_url"])
+            except Exception as exc:
+                message = "下载任务信息页失败：%s" % exc
+                LOG.error("%s", message)
+                self.report(job_id, False, message)
+                return
+            LOG.info("正在打印任务信息页（份数 1）：%s", cover_path.name)
+            ok, error = self.print_file(cover_path, 1, {})       # 信息页只打 1 份，不套用文档的份数/页面设置
+            if not ok:
+                self.report(job_id, False, "任务信息页：%s" % error)
+                return
 
         LOG.info("已领取任务 #%s（文件 %d 个）", job_id, len(files))
         LOG.info(

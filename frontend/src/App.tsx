@@ -1,6 +1,6 @@
 // 应用外壳：暖色仪表盘风格（侧栏 + 吸顶栏 + 路由表 + 登录守卫）
 // 风格参考见 AGENTS.md「前端风格（暖色仪表盘）」一节；页面统一用 Tailwind 工具类
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   Link,
@@ -24,7 +24,15 @@ import {
   UserCog,
   Wallet,
 } from 'lucide-react'
-import { api, clearToken, getToken, getUser, setOnAuthExpired, setUser as persistUser } from './api'
+import {
+  AVATAR_EVENT,
+  api,
+  clearToken,
+  getToken,
+  getUser,
+  setOnAuthExpired,
+  setUser as persistUser,
+} from './api'
 import ThemeToggle from './components/ThemeToggle'
 import LoginPage from './pages/LoginPage'
 import AnticraftCallbackPage from './pages/AnticraftCallbackPage'
@@ -47,7 +55,7 @@ const PAGE_META: Record<string, { title: string; subtitle: string }> = {
   '/profile': { title: '我的配置', subtitle: '默认配送地址与配送方式，以及 anticraft 账号绑定' },
   '/queue': { title: '任务队列', subtitle: '审核打印任务，并在出纸后勾选待配送 / 待取件与完成' },
   '/admin': { title: '管理设置', subtitle: '按二级菜单分栏：打印设置 / 打印计费 / 免费白名单 / 管理员名单 / anticraft 绑定 / 打印代理' },
-  '/users': { title: '用户管理', subtitle: '查看账号，并把普通用户提拔为管理员（仅超级管理员）' },
+  '/users': { title: '用户管理', subtitle: '账号操作中心：加/收管理员（仅 root）、免费账户开关、调整余额、删除账号（余额为 0，仅 root）' },
 }
 
 interface RequireAuthProps {
@@ -56,11 +64,18 @@ interface RequireAuthProps {
   admin?: boolean
   /** 仅超级管理员（root）可访问 */
   root?: boolean
+  /** 登录态还在水合中（有 token 但 /api/me 未返回）：先显示加载态，别跳登录页 */
+  hydrating?: boolean
   children: ReactNode
 }
 
 /** 简单的路由守卫：未登录跳登录页，权限不足回提交页 */
-function RequireAuth({ user, admin = false, root = false, children }: RequireAuthProps) {
+function RequireAuth({ user, admin = false, root = false, hydrating = false, children }: RequireAuthProps) {
+  // 刷新/深链进入时 user 还在异步水合（用 token 调 /api/me）：先等它，不然会先跳登录页、
+  // 水合完再命中 /login 的「已登录回角色主页」逻辑，把用户原本要去的页面丢掉（曾导致刷新 /users 落到 /queue）
+  if (hydrating && !user) {
+    return <p className="py-24 text-center text-sm text-gray-400">正在加载…</p>
+  }
   if (!user) return <Navigate to="/login" replace />
   if (admin && user.role !== 'admin' && user.role !== 'root') return <Navigate to="/submit" replace />
   if (root && user.role !== 'root') return <Navigate to="/submit" replace />
@@ -71,6 +86,12 @@ function App() {
   const navigate = useNavigate()
   const location = useLocation()
   const [user, setUser] = useState<UserType | null>(getUser)
+  /** 侧栏头像（objectURL；没设置头像时用首字母占位） */
+  const [avatarUrl, setAvatarUrl] = useState('')
+  const avatarUrlRef = useRef<string | null>(null)
+
+  /** 有 token 但用户信息还没取回来：这段时间不跳转，等水合完成 */
+  const [hydrating, setHydrating] = useState(() => !!getToken() && !getUser())
   // 小屏（<1024px）默认收起侧栏（抽屉），大屏默认展开
   const [sidebarOpen, setSidebarOpen] = useState(
     () => typeof window === 'undefined' || window.innerWidth >= 1024,
@@ -90,6 +111,9 @@ function App() {
       })
       .catch(() => {
         // 401 已由 api 统一清空登录态并触发过期回调，这里无需重复处理
+      })
+      .finally(() => {
+        if (active) setHydrating(false)
       })
     return () => {
       active = false
@@ -112,6 +136,35 @@ function App() {
     const timer = setTimeout(() => setNotice(''), 4000)
     return () => clearTimeout(timer)
   }, [notice])
+
+  /** 拉一次自己的头像（换/删头像时会再调一次） */
+  const refreshAvatar = useCallback(() => {
+    const id = user?.id
+    if (!id) {
+      if (avatarUrlRef.current) {
+        URL.revokeObjectURL(avatarUrlRef.current)
+        avatarUrlRef.current = null
+      }
+      setAvatarUrl('')
+      return
+    }
+    void api
+      .fetchAvatarBlob(id)
+      .then((blob) => {
+        if (avatarUrlRef.current) URL.revokeObjectURL(avatarUrlRef.current)
+        avatarUrlRef.current = URL.createObjectURL(blob)
+        setAvatarUrl(avatarUrlRef.current)
+      })
+      .catch(() => setAvatarUrl(''))
+  }, [user?.id])
+
+  // 登录用户变化时拉一次自己的头像（接口要 Bearer，所以 blob → objectURL）
+  useEffect(() => {
+    refreshAvatar()
+    // 我在「我的配置」里换了头像 → 这里立刻重拉，不用等刷新
+    window.addEventListener(AVATAR_EVENT, refreshAvatar)
+    return () => window.removeEventListener(AVATAR_EVENT, refreshAvatar)
+  }, [refreshAvatar])
 
   const handleLogin = useCallback((profile: UserType) => {
     persistUser(profile)
@@ -144,7 +197,7 @@ function App() {
       <Route
         path="/submit"
         element={
-          <RequireAuth user={user}>
+          <RequireAuth user={user} hydrating={hydrating}>
             <SubmitPage />
           </RequireAuth>
         }
@@ -152,7 +205,7 @@ function App() {
       <Route
         path="/mine"
         element={
-          <RequireAuth user={user}>
+          <RequireAuth user={user} hydrating={hydrating}>
             <MyJobsPage />
           </RequireAuth>
         }
@@ -160,7 +213,7 @@ function App() {
       <Route
         path="/balance"
         element={
-          <RequireAuth user={user}>
+          <RequireAuth user={user} hydrating={hydrating}>
             <BalancePage />
           </RequireAuth>
         }
@@ -168,7 +221,7 @@ function App() {
       <Route
         path="/profile"
         element={
-          <RequireAuth user={user}>
+          <RequireAuth user={user} hydrating={hydrating}>
             <ProfilePage />
           </RequireAuth>
         }
@@ -176,7 +229,7 @@ function App() {
       <Route
         path="/queue"
         element={
-          <RequireAuth user={user} admin>
+          <RequireAuth user={user} hydrating={hydrating} admin>
             <QueuePage />
           </RequireAuth>
         }
@@ -184,7 +237,7 @@ function App() {
       <Route
         path="/admin"
         element={
-          <RequireAuth user={user} admin>
+          <RequireAuth user={user} hydrating={hydrating} admin>
             <AdminPage />
           </RequireAuth>
         }
@@ -192,7 +245,7 @@ function App() {
       <Route
         path="/users"
         element={
-          <RequireAuth user={user} root>
+          <RequireAuth user={user} hydrating={hydrating} admin>
             <UsersPage />
           </RequireAuth>
         }
@@ -244,7 +297,7 @@ function App() {
     { to: '/balance', label: '我的余额', Icon: Wallet, admin: false, bottom: true },
     { to: '/profile', label: '我的配置', Icon: UserCog, admin: false, bottom: true },
     { to: '/admin', label: '管理设置', Icon: Settings, admin: true, bottom: true },
-    { to: '/users', label: '用户管理', Icon: ShieldCheck, root: true, bottom: true },
+    { to: '/users', label: '用户管理', Icon: ShieldCheck, admin: true, bottom: true },
   ].filter((item) => {
     if ('root' in item && item.root) return user.role === 'root'
     if (item.admin) return user.role === 'admin' || user.role === 'root'
@@ -300,9 +353,13 @@ function App() {
 
           <div className="mt-6 border-t border-gray-100 pt-6 dark:border-white/10">
             <div className="flex items-center gap-3 px-2">
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-amber text-sm font-semibold uppercase text-white">
-                {user.username.slice(0, 1)}
-              </span>
+              {avatarUrl ? (
+                <img src={avatarUrl} alt="" className="h-8 w-8 shrink-0 rounded-xl object-cover" />
+              ) : (
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-amber text-sm font-semibold uppercase text-white">
+                  {user.username.slice(0, 1)}
+                </span>
+              )}
               <div className="min-w-0">
                 <div className="truncate text-sm font-medium text-gray-700 dark:text-gray-200" title={user.username}>
                   {user.username}

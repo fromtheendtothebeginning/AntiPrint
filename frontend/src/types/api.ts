@@ -88,6 +88,8 @@ export interface Profile {
   free_reason: string
   /** 当前单价展示文本，如「0.1 元/张」 */
   price: string
+  /** 头像文件名（空串 = 没设置，用首字母占位） */
+  avatar: string
 }
 
 /** 余额流水（扣费/退费/管理员调账） */
@@ -143,6 +145,8 @@ export interface Settings {
   print_price: string
   /** 免费打印白名单（用户名，逗号分隔） */
   free_users: string
+  /** 是否在每次出纸前先打一张任务信息页：'1' = 打（默认），'0' = 不打 */
+  cover_page: string
 }
 
 /** anticraft 授权码登录的配置状态：enabled 为 false 时登录页禁用跳转按钮 */

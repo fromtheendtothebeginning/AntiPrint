@@ -4,21 +4,17 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   AlertTriangle,
-  BadgeCheck,
   Check,
   Coins,
   Copy,
   Link2,
   ListChecks,
   Loader2,
-  Plus,
-  Trash2,
   Plug,
   Printer,
   RefreshCw,
   RotateCcw,
   Settings,
-  ShieldCheck,
   Unplug,
   Wifi,
   WifiOff,
@@ -27,8 +23,8 @@ import { api, getErrorMessage } from '../api'
 import type { SettingsPayload } from '../api'
 import Modal from '../components/Modal'
 import TextField from '../components/TextField'
-import { ROLE_LABEL, formatTime } from '../constants'
-import type { AdminUserRow, Agent, Settings as SettingsData } from '../types/api'
+import { formatTime } from '../constants'
+import type { Agent, Settings as SettingsData } from '../types/api'
 
 const REFRESH_INTERVAL = 15000
 /** 目标打印机下拉里的「手动输入」选项值 */
@@ -57,24 +53,15 @@ const ALERT_ERROR =
   'flex items-start gap-2 rounded-xl bg-red-500/10 px-4 py-3 text-sm text-red-600 dark:text-red-400'
 const ALERT_OK = 'flex items-start gap-2 rounded-xl bg-brand/10 px-4 py-3 text-sm text-brand-dark dark:text-brand'
 const ALERT_WARN = 'flex items-start gap-2 rounded-xl bg-clay/10 px-4 py-3 text-sm text-clay'
-const TH = 'px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-400'
-const TD = 'px-4 py-3 text-sm text-gray-600 dark:text-gray-300'
 
 /** 二级菜单：管理页按功能分栏，避免一屏堆到底 */
 const TABS = [
   { key: 'printer', label: '打印设置', Icon: Printer },
   { key: 'billing', label: '打印计费', Icon: Coins },
-  { key: 'whitelist', label: '免费白名单', Icon: BadgeCheck },
-  { key: 'admins', label: '管理员名单', Icon: ShieldCheck },
   { key: 'anticraft', label: 'anticraft 绑定', Icon: Link2 },
   { key: 'agent', label: '打印代理', Icon: Wifi },
 ] as const
 type AdminTab = (typeof TABS)[number]['key']
-
-/** 逗号分隔的名字 → 数组（去空、去重） */
-function parseNames(value: string): string[] {
-  return Array.from(new Set(value.split(/[,，;；\s]+/).map((name) => name.trim()).filter(Boolean)))
-}
 
 /** 设置里的布尔值以字符串存储，兼容常见写法 */
 function isEnabled(value: string | null | undefined): boolean {
@@ -103,21 +90,16 @@ function AdminPage() {
   const [customPrinter, setCustomPrinter] = useState(false)
   const [copies, setCopies] = useState('1')
   const [dryRun, setDryRun] = useState(false)
+  /** 是否在每次出纸前先打一张任务信息页（封面页） */
+  const [coverPage, setCoverPage] = useState(true)
   const [anticraftBase, setAnticraftBase] = useState('')
   const [anticraftClientId, setAnticraftClientId] = useState('')
   const [anticraftClientSecret, setAnticraftClientSecret] = useState('')
   const [anticraftOrigins, setAnticraftOrigins] = useState('')
-  const [anticraftAdminUsers, setAnticraftAdminUsers] = useState('')
   /** 每张打印单价（元）与免费白名单（用户名，逗号分隔） */
   const [printPrice, setPrintPrice] = useState('0.1')
   /** 当前二级菜单 */
   const [tab, setTab] = useState<AdminTab>('printer')
-  /** 用户表：名单里的名字对不对得上账号，一眼能看出来 */
-  const [userRows, setUserRows] = useState<AdminUserRow[]>([])
-  const [newFreeUser, setNewFreeUser] = useState('')
-  const [newAdminUser, setNewAdminUser] = useState('')
-  const [listBusy, setListBusy] = useState(false)
-  const [freeUsers, setFreeUsers] = useState('')
   const [saving, setSaving] = useState(false)
   const [copied, setCopied] = useState(false)
   const [rotateOpen, setRotateOpen] = useState(false)
@@ -148,10 +130,9 @@ function AdminPage() {
       setCustomPrinter(!!saved.printer_name && !printers.includes(saved.printer_name))
       setCopies(saved.copies || '1')
       setDryRun(isEnabled(saved.dry_run))
+      setCoverPage(isEnabled(saved.cover_page ?? '1'))
       setAnticraftBase(saved.anticraft_base ?? '')
-      setAnticraftAdminUsers(saved.anticraft_admin_users ?? '')
       setPrintPrice(saved.print_price || '0.1')
-      setFreeUsers(saved.free_users ?? '')
       setAnticraftClientId(saved.anticraft_client_id ?? '')
       // 后端只回掩码，未配置时是空串；直接把返回值作为输入框初始内容
       setAnticraftClientSecret(saved.anticraft_client_secret ?? '')
@@ -169,11 +150,6 @@ function AdminPage() {
   // 首次加载设置（含代理状态）+ 每 15 秒只刷新代理状态（卸载时清理定时器）
   useEffect(() => {
     void loadSettings()
-    // 名单表格要把用户名和真实账号对应起来（写错的名字不会生效）
-    void api
-      .listUsers()
-      .then((list) => setUserRows(list))
-      .catch(() => undefined)
     const timer = setInterval(() => {
       void loadAgentStatus()
     }, REFRESH_INTERVAL)
@@ -225,51 +201,6 @@ function AdminPage() {
     setRefreshing(false)
   }
 
-  /** 名单类设置（免费白名单 / anticraft 管理员名单）：直接提交新的一份逗号分隔值 */
-  async function saveNames(field: 'free_users' | 'anticraft_admin_users', names: string[]) {
-    setListBusy(true)
-    setSettingsError('')
-    try {
-      const value = names.join(',')
-      const saved = await api.saveSettings(
-        field === 'free_users' ? { free_users: value } : { anticraft_admin_users: value },
-      )
-      setFreeUsers(saved.free_users ?? '')
-      setAnticraftAdminUsers(saved.anticraft_admin_users ?? '')
-      setSettings(saved)
-      setNotice('名单已保存')
-    } catch (err) {
-      setSettingsError(getErrorMessage(err))
-    } finally {
-      setListBusy(false)
-    }
-  }
-
-  /** 名单里追加一个名字（重复/为空直接忽略） */
-  async function addName(field: 'free_users' | 'anticraft_admin_users', raw: string) {
-    const name = raw.trim()
-    if (!name) return
-    const current = parseNames(field === 'free_users' ? freeUsers : anticraftAdminUsers)
-    if (current.includes(name)) {
-      setSettingsError(`${name} 已在名单里`)
-      return
-    }
-    await saveNames(field, [...current, name])
-    if (field === 'free_users') setNewFreeUser('')
-    else setNewAdminUser('')
-  }
-
-  /** 名单里移除一个名字 */
-  async function removeName(field: 'free_users' | 'anticraft_admin_users', name: string) {
-    const current = parseNames(field === 'free_users' ? freeUsers : anticraftAdminUsers)
-    await saveNames(field, current.filter((item) => item !== name))
-  }
-
-  /** 名单数组与「用户名 → 账号」索引：表格用，写错的名字一眼看出来 */
-  const freeNames = parseNames(freeUsers)
-  const adminNames = parseNames(anticraftAdminUsers)
-  const usersByName = new Map(userRows.map((row) => [row.username, row]))
-
   async function handleSaveSettings() {
     const copiesValue = copies.trim()
     const parsed = Number(copiesValue)
@@ -295,12 +226,9 @@ function AdminPage() {
     if (secretValue && secretValue !== MASKED_SECRET) payload.anticraft_client_secret = secretValue
     const originsValue = anticraftOrigins.trim()
     if (originsValue !== (settings?.anticraft_origins ?? '')) payload.anticraft_origins = originsValue
-    const adminUsersValue = anticraftAdminUsers.trim()
-    if (adminUsersValue !== (settings?.anticraft_admin_users ?? '')) payload.anticraft_admin_users = adminUsersValue
+    if (coverPage !== isEnabled(settings?.cover_page ?? '1')) payload.cover_page = coverPage ? 'true' : 'false'
     const priceValue = printPrice.trim() || '0.1'
     if (priceValue !== (settings?.print_price ?? '')) payload.print_price = priceValue
-    const freeUsersValue = freeUsers.trim()
-    if (freeUsersValue !== (settings?.free_users ?? '')) payload.free_users = freeUsersValue
 
     setSaving(true)
     setSettingsError('')
@@ -617,6 +545,23 @@ function AdminPage() {
             <span>演练模式（不真实出纸）</span>
           </label>
 
+          <label className="mt-3 flex cursor-pointer items-start gap-2.5 rounded-xl bg-warm px-4 py-3 text-sm text-gray-700 dark:bg-white/5 dark:text-gray-300">
+            <input
+              id="setting-cover-page"
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 accent-brand"
+              checked={coverPage}
+              onChange={(event) => setCoverPage(event.target.checked)}
+            />
+            <span>
+              打印任务信息页
+              <span className="mt-0.5 block text-xs text-gray-400">
+                每次出纸前先打一张任务信息页（任务号 / 提交人 / 文件名 / 份数 / 配送方式与地址 / 提交时间 / 打印时间），
+                线下交付时一眼看清「这是给谁的、打的是什么」；关掉则不打印（省一张纸）。
+              </span>
+            </span>
+          </label>
+
           <div className="mt-6 flex justify-end">
             <button type="button" className={BTN_PRIMARY} onClick={() => void handleSaveSettings()} disabled={saving}>
               {saving ? (
@@ -642,7 +587,7 @@ function AdminPage() {
             打印计费
           </h2>
           <p className={HINT}>
-            管理员/root、anticraft 账号与白名单（见「免费白名单」）免费；其余账号按「张数 × 单价」从余额扣除
+            管理员/root、anticraft 账号与白名单（在「用户管理」页按账号开关「设为免费」）免费；其余账号按「张数 × 单价」从余额扣除
             （张数 = PDF 页数 ÷ 每张页数 × 份数）。提交时扣、驳回/撤回自动退；充值功能暂未开放，余额由管理员在「用户管理」里手工调整。
           </p>
 
@@ -676,192 +621,7 @@ function AdminPage() {
         </section>
       )}
 
-      {tab === 'whitelist' && (
-        <section className={CARD}>
-          <h2 className="flex items-center gap-2 text-base font-semibold text-gray-800 dark:text-gray-100">
-            <BadgeCheck className="h-5 w-5 text-brand" />
-            免费白名单
-          </h2>
-          <p className={HINT}>
-            名单里的账号提交打印任务不扣余额（管理员/root、anticraft 账号本身就免费）。增删即时生效，不需要点「保存设置」。
-          </p>
 
-          {settingsError && (
-            <p className={`${ALERT_ERROR} mt-4`}>
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-              {settingsError}
-            </p>
-          )}
-
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            <input
-              className={`${INPUT} max-w-xs`}
-              value={newFreeUser}
-              placeholder="输入要免打印费的用户名"
-              onChange={(event) => setNewFreeUser(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault()
-                  void addName('free_users', newFreeUser)
-                }
-              }}
-            />
-            <button
-              type="button"
-              className={BTN_PRIMARY}
-              disabled={listBusy || !newFreeUser.trim()}
-              onClick={() => void addName('free_users', newFreeUser)}
-            >
-              {listBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-              添加
-            </button>
-          </div>
-
-          <div className="mt-4 overflow-x-auto">
-            <table className="w-full min-w-[440px]">
-              <thead>
-                <tr className="border-b border-gray-100 dark:border-white/10">
-                  <th className={TH}>用户名</th>
-                  <th className={TH}>账号</th>
-                  <th className={TH}>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {freeNames.length === 0 && (
-                  <tr>
-                    <td colSpan={3} className="px-4 py-8 text-center text-sm text-gray-400">
-                      白名单为空：所有计费账号提交任务都会扣余额
-                    </td>
-                  </tr>
-                )}
-                {freeNames.map((name) => {
-                  const row = usersByName.get(name)
-                  return (
-                    <tr key={name} className="border-b border-gray-50 last:border-0 dark:border-white/5">
-                      <td className={`${TD} font-medium text-gray-800 dark:text-gray-100`}>{name}</td>
-                      <td className={TD}>
-                        {row ? (
-                          <span className="text-gray-500 dark:text-gray-400">
-                            已注册 · {ROLE_LABEL[row.role] ?? row.role}
-                            {row.source === 'anticraft' ? ' · anticraft' : ''}
-                          </span>
-                        ) : (
-                          <span className="text-clay">本站没有这个账号（不会生效）</span>
-                        )}
-                      </td>
-                      <td className={`${TD} whitespace-nowrap`}>
-                        <button
-                          type="button"
-                          className={BTN_SM_DANGER}
-                          disabled={listBusy}
-                          onClick={() => void removeName('free_users', name)}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                          移除
-                        </button>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
-
-      {tab === 'admins' && (
-        <section className={CARD}>
-          <h2 className="flex items-center gap-2 text-base font-semibold text-gray-800 dark:text-gray-100">
-            <ShieldCheck className="h-5 w-5 text-brand" />
-            管理员名单
-          </h2>
-          <p className={HINT}>
-            这些 <strong>anticraft 用户名</strong>用 anticraft 登录或绑定时，在 AntiPrint 里直接获得管理员权限
-            （anticraft 开放接口不返回角色，所以用这份名单；用密码登录时会优先采用 anticraft 返回的角色）。增删即时生效。
-          </p>
-
-          {settingsError && (
-            <p className={`${ALERT_ERROR} mt-4`}>
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-              {settingsError}
-            </p>
-          )}
-
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            <input
-              className={`${INPUT} max-w-xs`}
-              value={newAdminUser}
-              placeholder="输入 anticraft 用户名"
-              onChange={(event) => setNewAdminUser(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault()
-                  void addName('anticraft_admin_users', newAdminUser)
-                }
-              }}
-            />
-            <button
-              type="button"
-              className={BTN_PRIMARY}
-              disabled={listBusy || !newAdminUser.trim()}
-              onClick={() => void addName('anticraft_admin_users', newAdminUser)}
-            >
-              {listBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-              添加
-            </button>
-          </div>
-
-          <div className="mt-4 overflow-x-auto">
-            <table className="w-full min-w-[440px]">
-              <thead>
-                <tr className="border-b border-gray-100 dark:border-white/10">
-                  <th className={TH}>anticraft 用户名</th>
-                  <th className={TH}>本账号</th>
-                  <th className={TH}>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {adminNames.length === 0 && (
-                  <tr>
-                    <td colSpan={3} className="px-4 py-8 text-center text-sm text-gray-400">
-                      名单为空：anticraft 登录的账号一律是普通用户
-                    </td>
-                  </tr>
-                )}
-                {adminNames.map((name) => {
-                  const row = usersByName.get(name)
-                  return (
-                    <tr key={name} className="border-b border-gray-50 last:border-0 dark:border-white/5">
-                      <td className={`${TD} font-medium text-gray-800 dark:text-gray-100`}>{name}</td>
-                      <td className={TD}>
-                        {row ? (
-                          <span className="text-gray-500 dark:text-gray-400">
-                            已注册 · {ROLE_LABEL[row.role] ?? row.role}
-                            {row.anticraft_id ? ` · 绑定 ID ${row.anticraft_id}` : ''}
-                          </span>
-                        ) : (
-                          <span className="text-gray-400">本站还没有对应账号（等他首次登录/绑定）</span>
-                        )}
-                      </td>
-                      <td className={`${TD} whitespace-nowrap`}>
-                        <button
-                          type="button"
-                          className={BTN_SM_DANGER}
-                          disabled={listBusy}
-                          onClick={() => void removeName('anticraft_admin_users', name)}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                          移除
-                        </button>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
 
       {tab === 'anticraft' && (
         <section className={CARD}>

@@ -27,6 +27,8 @@ TABLES = {
         ("anticraft_id", "INT NULL"),
         ("default_address", "VARCHAR(255) NULL"),
         ("default_delivery", "VARCHAR(8) NOT NULL DEFAULT '配送'"),
+        # 头像文件名（空 = 用首字母占位）；文件在 data/avatars/ 下
+        ("avatar", "VARCHAR(255) NULL"),
         # 账户余额（元）：计费账号提交任务时扣、驳回/撤回时退；DECIMAL 精确到分，避免浮点误差
         ("balance", "DECIMAL(10,2) NOT NULL DEFAULT 0"),
         ("created_at", "DATETIME NOT NULL"),
@@ -98,7 +100,7 @@ TABLES = {
 
 USER_FIELDS = (
     "id", "username", "password_hash", "role", "source", "anticraft_id",
-    "default_address", "default_delivery", "balance", "created_at",
+    "default_address", "default_delivery", "balance", "avatar", "created_at",
 )
 JOB_FIELDS = (
     "id", "user_id", "username", "status", "address", "note", "reject_reason", "print_error",
@@ -121,6 +123,8 @@ SETTINGS_DEFAULTS = {
     "print_price": "0.1",
     # 免费打印白名单（用户名，逗号分隔）：管理员/root、anticraft 账号、名单内账号不扣费
     "free_users": "",
+    # 每次出纸前先打一张「任务信息页」（提交人/文件/地址/提交与打印时间），'1' = 打（默认）
+    "cover_page": "1",
     "anticraft_base": "https://anticraft.top",
     "anticraft_client_id": "",
     "anticraft_client_secret": "",
@@ -282,6 +286,12 @@ def list_users():
             "FROM users u ORDER BY u.id"
         )
         return [_plain(row) for row in cur.fetchall()]
+
+
+def set_user_avatar(user_id, avatar):
+    """记录头像文件名（None/空串 = 清掉头像，回到首字母占位）"""
+    with tx() as cur:
+        cur.execute("UPDATE users SET avatar=%s WHERE id=%s", (avatar or None, user_id))
 
 
 def set_user_profile(user_id, default_address, default_delivery):
@@ -631,6 +641,17 @@ def delete_job(job_id):
         cur.execute("DELETE FROM print_jobs WHERE id=%s", (job_id,))
         cur.execute("DELETE FROM print_job_files WHERE job_id=%s", (job_id,))
         cur.execute("DELETE FROM print_jobs_logs WHERE job_id=%s", (job_id,))
+
+
+def delete_user(user_id):
+    """删除账号（护栏在接口层：余额必须为 0、不能删自己/root）。
+
+    只删 users 这一行：**任务与余额流水保留**（任务列表 LEFT JOIN 用户名，删号后用户名显示为空，
+    但打印记录与对账痕迹还在；这也是「余额为 0 才让删」的原因——钱没结清就删会丢账）。
+    """
+    with tx() as cur:
+        cur.execute("DELETE FROM users WHERE id=%s", (user_id,))
+        return cur.rowcount > 0
 
 
 def sha256_in_use(sha256):

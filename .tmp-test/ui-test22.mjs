@@ -42,14 +42,14 @@ try {
   await page.waitForTimeout(1600)
 
   console.log('\n1. 二级菜单')
-  const tabs = ['打印设置', '打印计费', '免费白名单', '管理员名单', 'anticraft 绑定', '打印代理']
+  const tabs = ['打印设置', '打印计费', 'anticraft 绑定', '打印代理']
   const nav = page.getByRole('navigation', { name: '管理设置子菜单' })
   let found = 0
   for (const name of tabs) found += await nav.getByRole('button', { name }).count()
-  check('六个分栏入口都在', found === tabs.length, `${found}/${tabs.length}`)
+  check('四个分栏入口都在（两个名单类分栏已挪走/取消）', found === tabs.length, `${found}/${tabs.length}`)
   const body = await page.locator('body').innerText()
   check('默认在「打印设置」（能看到启动器/份数，看不到名单表格）',
-        /启动器/.test(body) && /份数/.test(body) && !/免费白名单|白名单为空/.test(body.replace(/免费白名单/g, '', 1)) || !/白名单为空/.test(body),
+        /启动器/.test(body) && /份数/.test(body),
         body.replace(/\n/g, ' | ').slice(-70))
   check('「打印设置」不含 anticraft client_id', !/client_id/.test(body), '')
 
@@ -60,37 +60,18 @@ try {
   check('显示单价输入框', (await page.locator('#settings-price').count()) === 1, '')
   check('计费分栏里没有白名单输入框', (await page.locator('#settings-free-users').count()) === 0, '')
 
-  console.log('\n3. 免费白名单：表格增删')
-  await nav.getByRole('button', { name: '免费白名单' }).click()
+  console.log('\n3. 免费白名单已挪到「用户管理」（管理设置里不该再有）')
+  check('分栏里没有「免费白名单」', (await nav.getByRole('button', { name: '免费白名单' }).count()) === 0, '')
+  await nav.getByRole('button', { name: '打印计费' }).click()
   await page.waitForTimeout(600)
-  check('白名单是表格（表头：用户名 / 账号 / 操作）',
-        /用户名/.test(await page.locator('thead').innerText()) && /账号/.test(await page.locator('thead').innerText()), '')
-  await page.locator('input[placeholder="输入要免打印费的用户名"]').fill(WHITE)
-  await page.getByRole('button', { name: '添加' }).click()
-  await page.waitForTimeout(1400)
-  const rows = await page.locator('tbody tr').allInnerTexts()
-  check('新名字出现在表格里', rows.some((r) => r.includes(WHITE)), rows.join(' / ').slice(0, 80))
-  check('服务端白名单已写入', ((await settings()).free_users || '').includes(WHITE), (await settings()).free_users)
-  await page.screenshot({ path: `${SHOTS}/A1-admin-whitelist.png`, fullPage: true })
-  await page.locator('tr', { hasText: WHITE }).first().getByRole('button', { name: '移除' }).click()
-  await page.waitForTimeout(1400)
-  check('移除后表格里没有了', !(await page.locator('tbody tr').allInnerTexts()).some((r) => r.includes(WHITE)), '')
-  check('服务端白名单也移除了', !((await settings()).free_users || '').includes(WHITE), (await settings()).free_users)
+  check('计费分栏提示去「用户管理」开关免费账号',
+        /「用户管理」页按账号开关/.test(await page.locator('body').innerText()), '')
+  check('管理设置里没有白名单输入框', (await page.locator('#settings-free-users').count()) === 0, '')
 
-  console.log('\n4. 管理员名单：表格增删')
-  await nav.getByRole('button', { name: '管理员名单' }).click()
-  await page.waitForTimeout(600)
-  check('管理员名单也是表格', /anticraft 用户名/i.test(await page.locator('thead').innerText()), '')
-  await page.locator('input[placeholder="输入 anticraft 用户名"]').fill(ANTI)
-  await page.getByRole('button', { name: '添加' }).click()
-  await page.waitForTimeout(1400)
-  check('新名字出现在管理员名单里', (await page.locator('tbody tr').allInnerTexts()).some((r) => r.includes(ANTI)), '')
-  check('服务端 anticraft_admin_users 已写入', ((await settings()).anticraft_admin_users || '').includes(ANTI), '')
-  check('未注册的名字会标注「本站还没有对应账号」',
-        /本站还没有对应账号/.test(await page.locator('tr', { hasText: ANTI }).first().innerText()), '')
-  await page.locator('tr', { hasText: ANTI }).first().getByRole('button', { name: '移除' }).click()
-  await page.waitForTimeout(1400)
-  check('移除后服务端也清了', !((await settings()).anticraft_admin_users || '').includes(ANTI), '')
+  console.log('\n4. 管理员名单分栏也已取消')
+  check('分栏里没有「管理员名单」', (await nav.getByRole('button', { name: '管理员名单' }).count()) === 0, '')
+  check('anticraft 账号的管理员授权走「用户管理」的设为管理员按钮',
+        !(await page.locator('input[placeholder="输入 anticraft 用户名"]').count()), '')
 
   console.log('\n5. 其余分栏')
   await nav.getByRole('button', { name: 'anticraft 绑定' }).click()

@@ -1,10 +1,13 @@
 // 我的配置页：默认配送方式 / 默认配送地址 / anticraft 账号绑定
 // 表现层：Tailwind（暖色仪表盘）+ lucide-react 图标；卡片、按钮、提示条配方见 AGENTS.md「前端约定」
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import {
   AlertCircle,
+  AlertTriangle,
+  Check,
   CheckCircle2,
+  Image as ImageIcon,
   Loader2,
   MapPin,
   PackageCheck,
@@ -12,11 +15,12 @@ import {
   Save,
   ShieldCheck,
   ShieldOff,
+  Trash2,
   Truck,
   Unlink,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { api, getErrorMessage } from '../api'
+import { api, getErrorMessage, notifyAvatarChanged } from '../api'
 import Modal from '../components/Modal'
 import TextField from '../components/TextField'
 import { DELIVER, PICKUP } from '../constants'
@@ -74,9 +78,83 @@ function SectionHeader({ Icon, title, subtitle, tone = 'bg-brand/10 text-brand-d
 }
 
 function ProfilePage() {
+  /** 头像：预览地址（objectURL）、忙碌态与提示 */
+  const avatarInputRef = useRef<HTMLInputElement>(null)
+  const [avatarUrl, setAvatarUrl] = useState('')
+  const [avatarBusy, setAvatarBusy] = useState(false)
+  const [avatarNotice, setAvatarNotice] = useState('')
+  const [avatarError, setAvatarError] = useState(false)
+  const avatarUrlRef = useRef<string | null>(null)
+  /** 拉一次自己的头像图（接口要 Bearer，所以用 blob → objectURL） */
+  const loadAvatar = useCallback(async () => {
+    try {
+      const me = await api.me()
+      const blob = await api.fetchAvatarBlob(me.id)
+      if (avatarUrlRef.current) URL.revokeObjectURL(avatarUrlRef.current)
+      avatarUrlRef.current = URL.createObjectURL(blob)
+      setAvatarUrl(avatarUrlRef.current)
+    } catch {
+      if (avatarUrlRef.current) {
+        URL.revokeObjectURL(avatarUrlRef.current)
+        avatarUrlRef.current = null
+      }
+      setAvatarUrl('')
+    }
+  }, [])
+
+  /** 选中图片后立刻上传，并就地刷新预览 */
+  async function uploadAvatarFile(file: File) {
+    setAvatarBusy(true)
+    setAvatarError(false)
+    setAvatarNotice('')
+    try {
+      const saved = await api.uploadAvatar(file)
+      setProfile((prev) => (prev ? { ...prev, avatar: saved.avatar } : prev))
+      await loadAvatar()
+      notifyAvatarChanged()          // 侧栏立刻跟着换
+      setAvatarNotice('头像已更新（侧栏也会跟着变）')
+    } catch (err) {
+      setAvatarError(true)
+      setAvatarNotice(getErrorMessage(err))
+    } finally {
+      setAvatarBusy(false)
+    }
+  }
+
+  /** 移除头像：走后端（清 users.avatar 并删文件） */
+  async function removeAvatar() {
+    setAvatarBusy(true)
+    setAvatarError(false)
+    setAvatarNotice('')
+    try {
+      const saved = await api.removeAvatar()
+      setProfile((prev) => (prev ? { ...prev, avatar: saved.avatar } : prev))
+      if (avatarUrlRef.current) {
+        URL.revokeObjectURL(avatarUrlRef.current)
+        avatarUrlRef.current = null
+      }
+      setAvatarUrl('')
+      notifyAvatarChanged()
+      setAvatarNotice('头像已移除，恢复首字母占位')
+    } catch (err) {
+      setAvatarError(true)
+      setAvatarNotice(getErrorMessage(err))
+    } finally {
+      setAvatarBusy(false)
+    }
+  }
+
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loadError, setLoadError] = useState('')
   const [loading, setLoading] = useState(true)
+
+  // 首次进入拉一次头像；卸载时回收 objectURL
+  useEffect(() => {
+    void loadAvatar()
+    return () => {
+      if (avatarUrlRef.current) URL.revokeObjectURL(avatarUrlRef.current)
+    }
+  }, [loadAvatar])
 
   // 默认配送配置表单（两块共用一个保存按钮）
   const [address, setAddress] = useState('')
@@ -238,7 +316,70 @@ function ProfilePage() {
       <div className="mx-auto w-full max-w-2xl space-y-6">
         {/* 默认配送配置：配送方式与地址共用「保存配置」 */}
         <form className="space-y-6" onSubmit={handleSave}>
-          <section className={CARD}>
+          {/* 头像：选图后立刻上传，换完侧栏与这里都会跟着变 */}
+        <section className={CARD}>
+          <h2 className="flex items-center gap-2 text-base font-semibold text-gray-800 dark:text-gray-100">
+            <ImageIcon className="h-5 w-5 text-brand" />
+            头像
+          </h2>
+          <p className="mt-1 text-xs text-gray-400">支持 png / jpg / gif / webp，不超过 2MB；换一张即覆盖（旧的会自动删除）</p>
+
+          {avatarNotice && (
+            <p className={`${avatarError ? ALERT_ERROR : ALERT_OK} mt-4`}>
+              {avatarError ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> : <Check className="mt-0.5 h-4 w-4 shrink-0" />}
+              {avatarNotice}
+            </p>
+          )}
+
+          <div className="mt-4 flex flex-wrap items-center gap-4">
+            {avatarUrl ? (
+              <img
+                src={avatarUrl}
+                alt="当前头像"
+                className="h-20 w-20 rounded-2xl object-cover shadow-card"
+              />
+            ) : (
+              <span className="flex h-20 w-20 items-center justify-center rounded-2xl bg-amber text-2xl font-semibold uppercase text-white">
+                {profile?.username?.slice(0, 1) ?? '?'}
+              </span>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className={BTN_PRIMARY}
+                disabled={avatarBusy}
+                onClick={() => avatarInputRef.current?.click()}
+              >
+                {avatarBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImageIcon className="h-4 w-4" />}
+                {avatarUrl ? '更换头像' : '选择图片'}
+              </button>
+              {avatarUrl && (
+                <button
+                  type="button"
+                  className={BTN_SECONDARY}
+                  disabled={avatarBusy}
+                  onClick={() => void removeAvatar()}
+                >
+                  <Trash2 className="h-4 w-4" />
+                  移除头像
+                </button>
+              )}
+              <input
+                ref={avatarInputRef}
+                className="hidden"
+                type="file"
+                accept="image/png,image/jpeg,image/gif,image/webp"
+                onChange={(event) => {
+                  const file = event.target.files?.[0]
+                  event.target.value = ''
+                  if (file) void uploadAvatarFile(file)
+                }}
+              />
+            </div>
+          </div>
+        </section>
+
+        <section className={CARD}>
             <SectionHeader
               Icon={Truck}
               title="默认配送方式"

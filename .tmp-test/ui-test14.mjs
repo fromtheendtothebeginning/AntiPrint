@@ -83,6 +83,28 @@ try {
   check('登录页无横向溢出', m.scrollWidth <= m.innerWidth + 1, `${m.scrollWidth} / ${m.innerWidth}`)
   await shot(page, 'M1-login')
 
+  console.log('\n1b. 浏览器标签图标')
+  const iconInfo = await page.evaluate(async () => {
+    const svg = document.querySelector('link[rel="icon"][type="image/svg+xml"]')
+    const ico = document.querySelector('link[rel="icon"][type="image/x-icon"]')
+    const apple = document.querySelector('link[rel="apple-touch-icon"]')
+    const res = await fetch(svg ? svg.getAttribute('href') : '/favicon.svg')
+    return {
+      svg: !!svg, ico: !!ico, apple: !!apple,
+      status: res.status, type: res.headers.get('content-type') || '',
+      body: await res.text(),
+    }
+  })
+  check('页面声明了 svg / ico / apple-touch 三件图标',
+        iconInfo.svg && iconInfo.ico && iconInfo.apple, JSON.stringify(iconInfo).slice(0, 80))
+  check('favicon.svg 能正常加载（200 + svg 类型）',
+        iconInfo.status === 200 && iconInfo.type.includes('svg'), `${iconInfo.status} ${iconInfo.type}`)
+  check('图标用的是侧栏 logo 同款（lucide Printer 原始路径 + 品牌方块）',
+        iconInfo.body.includes('M6 18H4a2') && iconInfo.body.includes('width="36"') && iconInfo.body.includes('rx="12"'),
+        iconInfo.body.slice(0, 60))
+  check('图标是本站品牌图（打印机剪影 + 品牌色 #4a9d9a）',
+        iconInfo.body.includes('<svg') && iconInfo.body.includes('#4a9d9a'), iconInfo.body.slice(0, 40))
+
   console.log('\n2. 登录后：侧栏默认收起（抽屉）')
   await login(UNAME, 'Test123456')
   await page.waitForTimeout(600)

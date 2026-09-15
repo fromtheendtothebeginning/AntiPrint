@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 import config
 import constants
 import convert
+import cover
 import db
 
 logger = logging.getLogger("antiprint.agent")
@@ -85,6 +86,8 @@ def _job_payload(job):
         return None
     return {
         "id": job["id"],
+        # 任务信息页（封面页）：代理先把它打一张，再打下面的文件
+        "cover_url": f"/api/agent/jobs/{job['id']}/cover.pdf",
         "address": job["address"],
         "note": job["note"],
         "copies": job["copies"],
@@ -145,6 +148,27 @@ def claim(_: bool = Depends(require_agent)):
     if job:
         logger.info("代理领取任务 #%s（文件 %s 个）", job["id"], len(job.get("files") or []))
     return {"job": _job_payload(job)}
+
+
+@router.get("/jobs/{job_id}/cover.pdf")
+def download_cover(job_id: int, _: bool = Depends(require_agent)):
+    """任务信息页 PDF（每次请求重新生成，好让「打印时间」是当下的）"""
+    job = db.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    try:
+        path = cover.render(job)
+    except convert.ConvertError as exc:
+        raise HTTPException(status_code=500, detail=f"生成任务信息页失败：{exc}")
+    filename = f"任务信息-{job_id}.pdf"
+    return FileResponse(
+        str(path),
+        media_type="application/pdf",
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            "Content-Disposition": f"attachment; filename=\"cover-{job_id}.pdf\"; filename*=UTF-8''{quote(filename)}",
+        },
+    )
 
 
 @router.get("/jobs/{job_id}/files/{file_id}")

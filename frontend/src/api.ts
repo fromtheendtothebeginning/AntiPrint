@@ -23,6 +23,14 @@ const NO_EXPIRY_PATHS = ['/api/login', '/api/login/anticraft', '/api/oauth/antic
 
 let onAuthExpired: (() => void) | null = null
 
+/** 头像变更事件名：我的配置页换/删头像后广播，侧栏（App）监听到就重新拉一次 */
+export const AVATAR_EVENT = 'antiprint:avatar-changed'
+
+/** 广播头像已变更 */
+export function notifyAvatarChanged(): void {
+  window.dispatchEvent(new Event(AVATAR_EVENT))
+}
+
 /** 注册登录过期回调（App 挂载时注册；401 时清空本地登录态后触发） */
 export function setOnAuthExpired(cb: (() => void) | null): void {
   onAuthExpired = cb
@@ -115,6 +123,8 @@ export interface SettingsPayload {
   print_price?: string
   /** 免费打印白名单（用户名，逗号分隔） */
   free_users?: string
+  /** 是否打印任务信息页（'true' / 'false'） */
+  cover_page?: string
 }
 
 /** 用户配置的请求体（默认地址 / 默认配送方式） */
@@ -367,9 +377,35 @@ export const api = {
     return data.settings
   },
 
+  /** 上传/更换头像（png/jpg/gif/webp，≤2MB） */
+  async uploadAvatar(file: File): Promise<Profile> {
+    const form = new FormData()
+    form.append('file', file, file.name)
+    const data = await request<{ profile: Profile }>('/api/profile/avatar', { method: 'POST', body: form })
+    return data.profile
+  },
+
+  /** 移除自己的头像（清 users.avatar 并删文件） */
+  async removeAvatar(): Promise<Profile> {
+    const data = await request<{ profile: Profile }>('/api/profile/avatar', { method: 'DELETE' })
+    return data.profile
+  },
+
+  /** 取某人的头像图：接口需要 Bearer，所以拿 Blob 再由调用方 createObjectURL */
+  async fetchAvatarBlob(userId: number): Promise<Blob> {
+    const res = await rawRequest(`/api/users/${userId}/avatar`)
+    if (!res.ok) throw new Error('没有头像')
+    return res.blob()
+  },
+
   /** 我的余额（含最近的扣费/退费流水） */
   async getBalance(): Promise<BalanceInfo> {
     return request<BalanceInfo>('/api/balance')
+  },
+
+  /** root 删除账号（余额必须为 0；任务与流水保留） */
+  async deleteUser(userId: number): Promise<void> {
+    await request<{ ok: boolean }>(`/api/users/${userId}`, { method: 'DELETE' })
   },
 
   /** root 给账号加/减余额（充值暂未实现，先手工记账） */

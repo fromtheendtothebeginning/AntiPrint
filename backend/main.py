@@ -335,6 +335,7 @@ class SettingsBody(BaseModel):
     anticraft_origins: str | None = None
     anticraft_admin_users: str | None = None
     print_price: str | None = None
+    cover_page: str | int | bool | None = None
     free_users: str | None = None
 
 
@@ -420,6 +421,8 @@ def _profile_payload(user: dict) -> dict:
         "default_delivery": row.get("default_delivery") or constants.DELIVER,
         # 计费相关：余额、是否免费（管理员/anticraft/白名单）、为什么免费、当前单价
         "balance": row.get("balance") or 0,
+        # 头像文件名（空 = 前端用首字母占位）；前端用 /api/users/{id}/avatar 取图
+        "avatar": row.get("avatar") or "",
         "billable": not billing.is_free(row),
         "free_reason": billing.free_reason(row),
         "price": billing.price_text(),
@@ -505,6 +508,78 @@ def get_balance(user: dict = Depends(auth.get_current_user)):
     }
 
 
+AVATAR_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp")
+AVATAR_MAGIC = (
+    b"\x89PNG\r\n\x1a\n",      # png
+    b"\xff\xd8\xff",              # jpeg
+    b"GIF87a", b"GIF89a",           # gif
+)
+AVATAR_MAX = 2 * 1024 * 1024        # 2MB
+
+
+@app.post("/api/profile/avatar")
+async def upload_avatar(file: UploadFile = File(...), user: dict = Depends(auth.get_current_user)):
+    """上传/更换头像（png/jpg/gif/webp，≤2MB）；换头像只换文件名，前端不用清缓存。"""
+    original = Path(file.filename or "").name.strip()[:255] or "avatar"
+    suffix = Path(original).suffix.lower()
+    if suffix not in AVATAR_EXT:
+        raise HTTPException(status_code=400, detail="头像只支持 png / jpg / gif / webp")
+    content = await file.read(AVATAR_MAX + 1)
+    if len(content) > AVATAR_MAX:
+        raise HTTPException(status_code=400, detail="头像不能超过 2MB，请先压缩")
+    if not content:
+        raise HTTPException(status_code=400, detail="头像文件是空的")
+    head = content[:16]
+    is_webp = head[:4] == b"RIFF" and head[8:12] == b"WEBP"
+    if not (is_webp or any(head.startswith(magic) for magic in AVATAR_MAGIC)):
+        raise HTTPException(status_code=400, detail="这不是有效的图片文件（按内容判断）")
+
+    row = db.get_user_by_id(user["id"]) or {}
+    old = row.get("avatar") or ""
+    stored = f"{user['id']}-{int(time.time() * 1000)}{suffix}"
+    (config.AVATAR_DIR / stored).write_bytes(content)
+    db.set_user_avatar(user["id"], stored)
+    if old and old != stored:
+        try:                                     # 旧的删掉，失败不影响这次更换
+            (config.AVATAR_DIR / old).unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning("删除旧头像 %s 失败：%s", old, exc)
+    logger.info("用户 %s 更新了头像（%s，%s 字节）", user["username"], stored, len(content))
+    return {"profile": _profile_payload(user)}
+
+
+@app.delete("/api/profile/avatar")
+def remove_avatar(user: dict = Depends(auth.get_current_user)):
+    """移除头像：清 users.avatar 并删文件（回到首字母占位）"""
+    row = db.get_user_by_id(user["id"]) or {}
+    name = str(row.get("avatar") or "")
+    if name:
+        db.set_user_avatar(user["id"], None)
+        try:
+            (config.AVATAR_DIR / os.path.basename(name)).unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning("删除头像文件 %s 失败：%s", name, exc)
+    logger.info("用户 %s 移除了头像", user["username"])
+    return {"profile": _profile_payload(user)}
+
+
+@app.get("/api/users/{user_id}/avatar")
+def get_avatar(user_id: int, user: dict = Depends(auth.get_current_user)):
+    """读头像图（登录即可看；文件名只允许 avatars/<id>-* 这种形状，防目录穿越）。"""
+    row = db.get_user_by_id(user_id)
+    if not row or not row.get("avatar"):
+        raise HTTPException(status_code=404, detail="该用户没有设置头像")
+    name = str(row["avatar"])
+    if os.path.basename(name) != name or not name.startswith(f"{user_id}-"):
+        raise HTTPException(status_code=404, detail="头像不存在")
+    path = config.AVATAR_DIR / name
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="头像文件不存在")
+    media_type = mimetypes.guess_type(name)[0] or "application/octet-stream"
+    return FileResponse(str(path), media_type=media_type,
+                        headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"})
+
+
 @app.get("/api/users")
 def list_users(user: dict = Depends(auth.require_admin)):
     """用户列表（管理员可看，含角色/来源/anticraft 绑定/任务数）"""
@@ -553,6 +628,30 @@ def adjust_user_balance(user_id: int, body: BalanceBody, user: dict = Depends(au
         raise HTTPException(status_code=400, detail=f"扣减后余额不能为负（当前 {balance} 元）")
     logger.info("root %s 给用户 %s 调账 %s 元（%s），余额 %s", user["username"], target["username"], delta, note, balance)
     return {"ok": True, "balance": str(balance)}
+
+
+@app.delete("/api/users/{user_id}")
+def delete_user(user_id: int, user: dict = Depends(auth.require_admin)):
+    """删除账号（管理员/root）：**余额必须为 0**，不能删自己或 root。
+
+    任务与余额流水保留（任务列表里提交人显示为空），所以不放心的账号先把余额调成 0 再删。
+    """
+    target = db.get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if target["id"] == user["id"]:
+        raise HTTPException(status_code=400, detail="不能删除自己的账号")
+    if target["role"] == "root":
+        raise HTTPException(status_code=400, detail="不能删除超级管理员账号")
+    balance = Decimal(str(target.get("balance") or 0))
+    if balance != 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"该账号余额还有 {balance} 元，先在「调整余额」里扣到 0 再删除",
+        )
+    db.delete_user(user_id)
+    logger.info("root %s 删除了账号 %s（#%s，余额 0）", user["username"], target["username"], user_id)
+    return {"ok": True}
 
 
 @app.post("/api/users/{user_id}/role")
@@ -1346,6 +1445,8 @@ def update_settings(body: SettingsBody, user: dict = Depends(auth.require_admin)
         updates["copies"] = str(int(raw))
     if body.dry_run is not None:
         updates["dry_run"] = "1" if str(body.dry_run).strip().lower() in ("1", "true", "yes", "on") else "0"
+    if body.cover_page is not None:
+        updates["cover_page"] = "1" if str(body.cover_page).strip().lower() in ("1", "true", "yes", "on") else "0"
     if body.print_price is not None:
         try:
             updates["print_price"] = str(billing.parse_price(body.print_price))
