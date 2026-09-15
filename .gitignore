@@ -6,6 +6,7 @@ __pycache__/
 # 依赖与构建产物
 node_modules/
 frontend/dist/
+dist/
 
 # 本机配置与数据（含凭据，禁止提交）
 backend/.env
