@@ -88,6 +88,11 @@ try {
   console.log('\n2. 提交页按默认配置预填（取件 → 地址非必填）')
   await nav(/提交打印/).click()
   await page.waitForTimeout(1600)
+  // 现在提交是两步：先选文件 → 下一步，才到配送信息（默认地址在这一步预填）
+  await page.locator('input[type=file]').first().setInputFiles(PDF)
+  await page.waitForTimeout(900)
+  await page.getByRole('button', { name: '下一步：填写配送信息' }).click()
+  await page.waitForTimeout(900)
   const addrValue = await page.locator('input[name=address]').inputValue()
   check('默认地址已预填', addrValue === UADDR, addrValue)
   const checkedPickup = await page.getByRole('radio', { name: /取件/ }).isChecked().catch(() => null)

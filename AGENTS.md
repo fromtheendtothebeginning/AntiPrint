@@ -43,7 +43,9 @@
 | 队列/配置 UI | `node .tmp-test\ui-test8.mjs` | 14 项全通过：配置页保存默认地址与默认取件、提交页按默认值预填、队列页勾选「待配送」→「已完成」（勾选后状态与时间正确）、用户侧看到新状态；页面 JS 错误 0 |
 | 绑定/解绑 UI | `node .tmp-test\ui-test9.mjs`（真实本机 anticraft 授权，自包含可重复） | 7 项全通过：A 账号绑定成功并显示 anticraft 用户 ID → B 账号绑同一 anticraft 账号被拒（提示占用者）→ A 解绑（设置本地密码）后可用新密码登录；页面 JS 错误 0 |
 | 打印设置（份数/纸张/页面范围/每张页数/缩放） | `backend\.venv\Scripts\python.exe .tmp-test\print_options_test.py` | 16 项全通过：完整设置落库与回读、默认值、8 类非法值 400、代理 claim 能拿到设置、用户/管理列表都带 print_options；另用代理 `--dry-run` 验证命令行出现 `-print-settings 3x,paper=A3,1-2,2,2,fit` |
-| 文件预览（提交前 / 我的任务 / 管理员队列） | `node .tmp-test/ui-test10.mjs` | 5 项全通过：提交页点文件名弹出本地预览（未上传也能看）、「我的任务」点文件名渲染 iframe、管理员队列预览不受影响；页面 JS 错误 0 |
+| 逐文件设置（API） | `backend\.venv\Scripts\python.exe .tmp-test/per_file_settings_test.py` | 12 项全通过：两文件两套设置各自落库、代理 claim 逐文件带设置、非法纸张/份数 0/非法范围/非 JSON 一律 400、settings 比文件短时缺的回落任务级、不传 settings 时任务级设置仍生效 |
+| 文件预览（我的任务 / 管理员队列） | `node .tmp-test/ui-test10.mjs` | 4 项全通过：走两步流程提交后，「我的任务」点文件名弹窗预览渲染 iframe、管理员队列预览正常；页面 JS 错误 0 |
+| 两步提交 + 逐文件打印设置 | `node .tmp-test/ui-test13.mjs` | 19 项全通过：第一步选两文件后逐文件各自的设置互不影响、页面范围让预览跳到 `#page=2`、每张页数提示「按 4 页/张排版」、切换文件预览在 iframe/img 间切换、第二步「返回修改打印设置」不丢状态、提交成功卡片逐文件列设置、后端按文件存了两套 print_options |
 | 内嵌预览（投放区变预览面板） | `node .tmp-test/ui-test11.mjs` | 12 项全通过：拖入 PDF 后投放提示消失、面板显示「正在预览」并渲染 iframe，继续拖入图片后点文件名可切换（img 出现、iframe 让位）、「放大查看」走弹窗、「清空」回到投放区、提交后我的任务与管理员队列预览仍正常；页面 JS 错误 0 |
 
 **测试中修掉的真 bug（勿回退）**：
@@ -114,13 +116,12 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
 - 允许的流转集中在 `constants.HANDOVER_NEXT`（`{当前状态: {目标状态: 该目标要求的配送方式}}`），**服务端强校验**：配送单不能标「待取件」，反之亦然；重复标记、越级流转一律 400。改状态机只改这一张表 + 两端 constants。
 - 用户侧在「我的任务」看到同样的徽章与提示（待配送=等待管理员送达、待取件=到打印点自取、已完成=完成时间）。
 
-## 打印设置（提交页可选，2026-09-15 新增）
+## 打印设置（**逐文件**可选，2026-09-15 起）
 
-- **数据**：`print_jobs.copies`（份数 1~99）+ `print_jobs.print_options`（JSON 文本，其余项）。取值**就是 SumatraPDF `-print-settings` 的原生 token**，白名单在 `constants.py`：`PRINT_PAPER`（A4/A3/A5/B5/Letter/Legal）、`PRINT_NUP`（"1,1"/"2,1"/"1,2"/"2,2"/"3,3"/"4,4"，即「行,列」）、`PRINT_SCALE`（fit / noscale / shrink）、页面范围（只允许数字/逗号/短横线，≤64 字）。**没有双面/彩色**：目标机型是黑白激光、无自动双面单元，2026-09-15 按用户要求移除，接口传了也会被忽略。
-- **接口**：`POST /api/jobs` 接受 `copies/paper/pages/nup/scale` 表单字段（留空 = 驱动默认），服务端逐项白名单校验、非法值一律 400；任务出参与代理 `claim` 都返回解析好的 `print_options` dict（`main.py` 的 `_job_payload` 与 `agent_api.py` 的 `_parse_options`）。
-- **代理**：`PrintAgent.build_print_settings(copies, options)` 拼成一条 `-print-settings`，顺序 = 份数 → 纸张 → 页面范围 → 每张页数 → 缩放，例如 `3x,paper=A3,1-3,2,2,fit`；日志会打印「应用打印设置：…」，排查「设置没生效」先看这一行。
-- **前端**：提交页「打印设置」卡片用 `constants.ts` 的 `DUPLEX_OPTIONS/PAPER_OPTIONS/NUP_OPTIONS/SCALE_OPTIONS/COLOR_OPTIONS` 渲染；摘要文案统一用 `describePrintOptions(job.print_options, job.copies)`（我的任务、任务队列、提交成功卡片三处共用）。
-- **机型限制**：目标机 P1106 是**黑白**激光、无自动双面单元，因此界面只提供上面这些项（不再有双面/彩色）。
+- **数据**：**每个文件一套设置** —— `print_job_files.print_options`（JSON 文本，含 `copies`）；`print_jobs.copies` / `print_jobs.print_options` 保留为**任务级默认**（老任务与不传 `settings` 的调用方走它）。取值**就是 SumatraPDF `-print-settings` 的原生 token**，白名单在 `constants.py`：`PRINT_PAPER`（A4/A3/A5/B5/Letter/Legal）、`PRINT_NUP`（"1,1"/"2,1"/"1,2"/"2,2"/"3,3"/"4,4"，即「行,列」）、`PRINT_SCALE`（fit / noscale / shrink）、页面范围（只允许数字/逗号/短横线，≤64 字）、份数 1~99。**没有双面/彩色**：目标机型是黑白激光、无自动双面单元，2026-09-15 按用户要求移除，接口传了也会被忽略。
+- **接口**：`POST /api/jobs` 接受 **`settings`**（JSON 字符串，**数组与 `files` 顺序一一对应**，如 `[{"copies":2,"paper":"A3","pages":"1-2","nup":"2,2","scale":"fit"}]`；数组比文件短时缺的回落任务级默认），并兼容任务级 `copies/paper/pages/nup/scale`；逐项白名单校验、非法值一律 400。任务出参与代理 `claim` 里**每个文件**都带解析好的 `print_options`。
+- **代理**：打印每个文件前按 **文件级 → 任务级 → 全局设置** 取该文件的设置，`PrintAgent.build_print_settings(copies, options)` 拼成一条 `-print-settings`（顺序：份数 → 纸张 → 页面范围 → 每张页数 → 缩放，例如 `3x,paper=A3,1-3,2,2,fit`）；日志打印「应用打印设置：…」，排查「设置没生效」先看这一行。
+- **前端**：提交页是**两步向导** —— ①「打印文件与设置」：投放区（`DropZone` 加 `hideChips`）→ 自绘文件行列表（点行选中）→ 右栏编辑**选中文件**的设置（`#file-settings-copies/paper/pages/nup/scale`，切换文件各自保留）→ 右栏预览按设置显示（PDF `#page=<页面范围起始页>`、图片 img、高 480px；每张页数 ≠ 1 时提示「按 N 页/张排版，预览为单页视图」）；②「配送与备注」：配送方式/地址/备注 + 「返回修改打印设置」+「提交打印任务」。摘要文案统一 `describePrintOptions(options, copies)`。
 
 ## 数据库（MySQL 8）
 

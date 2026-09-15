@@ -599,8 +599,17 @@ class PrintAgent:
                 self.report(job_id, False, message)
                 return
 
-            LOG.info("正在打印 %d/%d：%s", index, len(files), filename)
-            ok, error = self.print_file(local_path, copies, options)
+            # 每个文件可以有各自的打印设置：文件级 → 任务级 → 全局默认
+            file_options = file_info.get("print_options") or options or {}
+            try:
+                file_copies = int(
+                    file_options.get("copies") or file_info.get("copies") or copies or 1
+                )
+            except (TypeError, ValueError):
+                file_copies = copies
+
+            LOG.info("正在打印 %d/%d：%s（份数 %d）", index, len(files), filename, file_copies)
+            ok, error = self.print_file(local_path, file_copies, file_options)
             if not ok:
                 self.report(job_id, False, "%s：%s" % (filename, error))
                 return

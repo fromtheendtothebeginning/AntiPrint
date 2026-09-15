@@ -1,4 +1,4 @@
-// UI 验收：文件预览（提交前本地预览 / 我的任务 / 管理员队列）
+// UI 验收：文件预览（「我的任务」/ 管理员队列）——提交前预览由两步向导的第一步预览面板覆盖（见 ui-test13）
 // 运行：node D:/anticraft/AntiPrint/.tmp-test/ui-test10.mjs
 import { createRequire } from 'node:module'
 import fs from 'node:fs'
@@ -23,10 +23,10 @@ const shot = (page, name) => page.screenshot({ path: `${SHOTS}/${name}.png`, ful
 
 const tag = String(Date.now()).slice(-6)
 const UNAME = 'prev' + tag
-const reg = await (await fetch(API + '/api/register', {
+await fetch(API + '/api/register', {
   method: 'POST', headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ username: UNAME, password: 'Test123456' }),
-})).json()
+})
 
 const browser = await chromium.launch({ executablePath: CHROME, args: ['--no-sandbox'] })
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 950 } })
@@ -51,35 +51,29 @@ async function login(username, password) {
 }
 
 try {
-  console.log('\n1. 提交前预览所选文件（本地，无需上传）')
+  console.log('\n1. 走两步流程提交一个任务')
   await login(UNAME, 'Test123456')
   await page.locator('input[type=file]').first().setInputFiles(PDF)
-  await page.waitForTimeout(600)
-  await page.getByRole('button', { name: /预览.*test-print\.pdf/ }).click()
-  await page.waitForTimeout(1200)
-  check('提交页弹出预览弹窗', (await page.locator('iframe').count()) > 0, '')
-  const modalTitle = await page.locator('body').innerText()
-  check('弹窗标题带文件名', /预览：test-print\.pdf/.test(modalTitle), '')
-  await shot(page, '91-submit-preview')
-  await page.keyboard.press('Escape')
-  await page.waitForTimeout(500)
-
-  console.log('\n2. 提交任务后「我的任务」预览')
-  await page.locator('input[name=address]').fill('预览验收（可删除）')
+  await page.waitForTimeout(900)
+  await page.getByRole('button', { name: '下一步：填写配送信息' }).click()
+  await page.waitForTimeout(800)
+  await page.locator('input[name=address]').fill('预览回归（可删除）')
   await page.getByRole('button', { name: '提交打印任务' }).click()
-  await page.waitForTimeout(2200)
+  await page.waitForTimeout(2400)
+  check('提交成功', /提交成功/.test(await page.locator('body').innerText()), '')
+
+  console.log('\n2. 「我的任务」点文件名弹窗预览')
   await nav(/我的任务/).click()
   await page.waitForTimeout(1600)
-  const mineText = await page.locator('body').innerText()
-  check('我的任务里有可点击的文件名', /test-print\.pdf/.test(mineText), '')
+  check('我的任务里有可点击的文件名', /test-print\.pdf/.test(await page.locator('body').innerText()), '')
   await page.getByRole('button', { name: /预览.*test-print\.pdf/ }).first().click()
   await page.waitForTimeout(2000)
   check('我的任务预览弹窗渲染 iframe', (await page.locator('iframe').count()) > 0, '')
   await shot(page, '92-mine-preview')
   await page.keyboard.press('Escape')
-  await page.waitForTimeout(500)
+  await page.waitForTimeout(600)
 
-  console.log('\n3. 管理员队列预览仍然可用')
+  console.log('\n3. 管理员队列预览')
   await login('admin', 'admin123')
   await nav(/任务队列/).click()
   await page.waitForTimeout(2000)
@@ -94,20 +88,16 @@ try {
   await browser.close()
 }
 
-// 清理：删掉本次测试账号与任务
 const adminToken = (await (await fetch(API + '/api/login', {
   method: 'POST', headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ username: 'admin', password: 'admin123' }),
 })).json()).token
-const jobs = (await (await fetch(API + '/api/jobs', { headers: { Authorization: 'Bearer ' + adminToken } })).json()).jobs
-for (const job of jobs.filter((j) => j.username === UNAME)) {
-  await fetch(`${API}/api/jobs/${job.id}`, { method: 'DELETE', headers: { Authorization: 'Bearer ' + adminToken } })
+for (const j of (await (await fetch(API + '/api/jobs', { headers: { Authorization: 'Bearer ' + adminToken } })).json()).jobs.filter((j) => j.username === UNAME)) {
+  await fetch(`${API}/api/jobs/${j.id}`, { method: 'DELETE', headers: { Authorization: 'Bearer ' + adminToken } })
 }
-console.log(`\n（测试账号 ${UNAME} 及其任务已在接口侧清理任务，账号由收尾脚本删除）`)
-
 console.log('\n=== 页面 JS 错误 ===')
 console.log(jsErrors.length ? jsErrors.slice(0, 5).join('\n') : '  无')
 console.log(`\n===== 预览 UI：通过 ${pass.length} 项，失败 ${fail.length} 项 =====`)
 fail.forEach((f) => console.log('  - 失败：' + f))
-console.log('截图目录：' + SHOTS)
+console.log(`（测试账号 ${UNAME} 的任务已清理）`)
 process.exit(fail.length || jsErrors.length ? 1 : 0)

@@ -85,10 +85,14 @@ def _job_payload(job):
                 "filename": item["filename"],
                 "size": item["size"],
                 "url": f"/api/agent/jobs/{job['id']}/files/{item['id']}",
+                "print_options": _parse_options(item.get("print_options")),
             }
             for item in job.get("files", [])
         ],
     }
+
+
+# 上面的 files 循环里补上每个文件的打印设置（文件级优先，任务级作兜底，代理自己决定优先级）
 
 
 @router.post("/register")

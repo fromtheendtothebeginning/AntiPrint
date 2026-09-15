@@ -54,6 +54,7 @@ TABLES = {
         ("stored_name", "VARCHAR(255) NOT NULL"),
         ("size", "INT NOT NULL"),
         ("sha256", "CHAR(64) NOT NULL"),
+        ("print_options", "VARCHAR(255) NULL"),
         ("created_at", "DATETIME NOT NULL"),
     ],
     "print_jobs_logs": [
@@ -89,7 +90,7 @@ JOB_FIELDS = (
     "agent_id", "copies", "delivery_mode", "print_options", "claimed_at", "printed_at", "finished_at",
     "created_at", "updated_at",
 )
-FILE_FIELDS = ("id", "job_id", "filename", "stored_name", "size", "sha256", "created_at")
+FILE_FIELDS = ("id", "job_id", "filename", "stored_name", "size", "sha256", "print_options", "created_at")
 AGENT_FIELDS = ("id", "name", "version", "printers", "launcher", "last_seen", "created_at")
 
 # settings 缺失键的默认值（agent_token 单独处理：必须落库，否则每次重启都会变）
@@ -331,9 +332,12 @@ def create_job(user_id, address, note, files, delivery_mode=DELIVER, copies=1, p
         job_id = cur.lastrowid
         for item in files:
             cur.execute(
-                "INSERT INTO print_job_files (job_id, filename, stored_name, size, sha256, created_at) "
-                "VALUES (%s,%s,%s,%s,%s,NOW())",
-                (job_id, item["filename"], item["stored_name"], item["size"], item["sha256"]),
+                "INSERT INTO print_job_files (job_id, filename, stored_name, size, sha256, print_options, created_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,NOW())",
+                (
+                    job_id, item["filename"], item["stored_name"], item["size"], item["sha256"],
+                    item.get("print_options"),
+                ),
             )
         cur.execute("SELECT username FROM users WHERE id=%s", (user_id,))
         row = cur.fetchone()

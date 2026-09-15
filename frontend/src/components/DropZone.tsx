@@ -2,6 +2,7 @@
 //   1) 默认：虚线投放区（点击或拖入选择文件），已选文件用 FileChips 展示
 //   2) previewInline：选完文件后投放区**变成预览面板**（PDF 用 iframe、图片用 img），
 //      面板里可以切换文件、继续添加、清空，并支持把文件直接拖进面板继续追加
+// hideChips：只渲染投放区与隐藏 input，不渲染 FileChips（调用方自己画文件列表，如提交页）
 import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, DragEvent, KeyboardEvent } from 'react'
 import { Expand, Plus, Trash2, UploadCloud } from 'lucide-react'
@@ -19,6 +20,8 @@ interface DropZoneProps {
   onPreview?: (index: number) => void
   /** 选完文件后把投放区换成预览面板（提交页启用） */
   previewInline?: boolean
+  /** 为真时只渲染投放区与隐藏 input，不再渲染 FileChips（文件列表由调用方自己画） */
+  hideChips?: boolean
 }
 
 /** 按扩展名决定内嵌预览方式 */
@@ -37,6 +40,7 @@ function DropZone({
   hint,
   onPreview,
   previewInline = false,
+  hideChips = false,
 }: DropZoneProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragging, setDragging] = useState(false)
@@ -206,12 +210,14 @@ function DropZone({
         onChange={handleInputChange}
       />
 
-      <FileChips
-        files={files}
-        onRemove={(index) => onChange(files.filter((_, current) => current !== index))}
-        // previewInline 时点文件名切到那个文件的预览（而不是弹窗）
-        onPreview={previewInline ? (index) => setActiveIndex(index) : onPreview}
-      />
+      {!hideChips && (
+        <FileChips
+          files={files}
+          onRemove={(index) => onChange(files.filter((_, current) => current !== index))}
+          // previewInline 时点文件名切到那个文件的预览（而不是弹窗）
+          onPreview={previewInline ? (index) => setActiveIndex(index) : onPreview}
+        />
+      )}
     </div>
   )
 }

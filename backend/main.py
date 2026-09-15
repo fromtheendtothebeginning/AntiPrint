@@ -206,11 +206,15 @@ def _build_print_options(paper: str, pages: str, nup: str, scale: str) -> dict:
 
 
 def _job_payload(job):
-    """任务出参：把 print_options 从 JSON 文本解析成 dict（前端/代理直接可用）"""
+    """任务出参：任务级与**每个文件**的 print_options 都从 JSON 文本解析成 dict"""
     if not job:
         return job
     payload = dict(job)
     payload["print_options"] = _parse_print_options(job.get("print_options"))
+    payload["files"] = [
+        {**item, "print_options": _parse_print_options(item.get("print_options"))}
+        for item in (job.get("files") or [])
+    ]
     return payload
 
 
@@ -809,6 +813,7 @@ def create_job(
     note: str = Form(default=""),
     delivery_mode: str = Form(default=""),
     copies: str = Form(default="1"),
+    settings: str = Form(default=""),
     paper: str = Form(default=""),
     pages: str = Form(default=""),
     nup: str = Form(default=""),
@@ -842,6 +847,39 @@ def create_job(
         raise HTTPException(status_code=400, detail=f"份数需在 1~{constants.PRINT_COPIES_MAX} 之间")
     options = _build_print_options(paper, pages, nup, scale)
     options["copies"] = copies_value
+    # 每个文件可以有自己的打印设置：settings 是 JSON 数组，顺序与 files 一一对应；
+    # 某一项为空对象时该文件沿用任务级默认（上面的 options）。
+    file_settings: list[dict] = []
+    if (settings or "").strip():
+        try:
+            raw_settings = json.loads(settings)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="打印设置格式不正确")
+        if not isinstance(raw_settings, list):
+            raise HTTPException(status_code=400, detail="打印设置格式不正确")
+        seen_options: dict[str, dict] = {}
+        for item in raw_settings:
+            if not isinstance(item, dict):
+                raise HTTPException(status_code=400, detail="打印设置格式不正确")
+            key = json.dumps(item, sort_keys=True, ensure_ascii=False)
+            if key not in seen_options:
+                one = _build_print_options(
+                    str(item.get("paper") or ""), str(item.get("pages") or ""),
+                    str(item.get("nup") or ""), str(item.get("scale") or ""),
+                )
+                raw_copies = item.get("copies")
+                if raw_copies in (None, ""):
+                    file_copies = copies_value          # 该文件没单独填份数 → 用任务级默认
+                else:
+                    try:
+                        file_copies = int(str(raw_copies))
+                    except ValueError:
+                        raise HTTPException(status_code=400, detail="份数必须是整数")
+                if not 1 <= file_copies <= constants.PRINT_COPIES_MAX:
+                    raise HTTPException(status_code=400, detail=f"份数需在 1~{constants.PRINT_COPIES_MAX} 之间")
+                one["copies"] = file_copies
+                seen_options[key] = one
+            file_settings.append(seen_options[key])
 
     uploads = [f for f in (files or []) if (f.filename or "").strip()]
     if not uploads:
@@ -855,7 +893,7 @@ def create_job(
     saved: list[dict] = []
     seen: set[str] = set()
     try:
-        for item in uploads:
+        for index, item in enumerate(uploads):
             original = Path(item.filename).name.strip()[:255] or "未命名"
             suffix = Path(original).suffix.lower()
             if suffix in constants.DANGEROUS_EXT:
@@ -888,6 +926,11 @@ def create_job(
                 "stored_name": stored_name,
                 "size": size,
                 "sha256": digest,
+                # 该文件自己的打印设置（没传 settings 时为空，代理回落到任务级默认）
+                "print_options": (
+                    json.dumps(file_settings[index], ensure_ascii=False)
+                    if index < len(file_settings) and file_settings[index] else None
+                ),
             })
         if not saved:
             raise HTTPException(status_code=400, detail="没有有效文件可提交")
@@ -909,8 +952,8 @@ def create_job(
             logger.error("任务 #%s 文件落盘失败：%s", job["id"], exc)
             raise HTTPException(status_code=500, detail="文件保存失败，请重试")
         logger.info(
-            "用户 %s 提交任务 #%s（%s 个文件，%s，份数 %s，打印设置 %s，地址：%s）",
-            user["username"], job["id"], len(saved), mode, copies_value, options, address or "（取件）",
+            "用户 %s 提交任务 #%s（%s 个文件，%s，份数 %s，任务级设置 %s，逐文件设置 %s 条，地址：%s）",
+            user["username"], job["id"], len(saved), mode, copies_value, options, len(file_settings), address or "（取件）",
         )
         return {"job": _job_payload(db.get_job(job["id"]))}
     except HTTPException:

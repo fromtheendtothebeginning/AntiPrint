@@ -41,6 +41,8 @@ export interface JobFile {
   filename: string
   size: number
   sha256: string
+  /** 该文件自己的打印设置（后端已解析成 dict；缺省表示按任务级默认处理） */
+  print_options?: PrintOptions
 }
 
 export interface Job {
