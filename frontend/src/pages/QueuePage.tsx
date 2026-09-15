@@ -337,6 +337,7 @@ function QueuePage() {
 
         <p className="mb-4 text-xs text-gray-400">
           共 {visibleJobs.length} 条任务（列表每 15 秒自动刷新；出纸后按配送方式勾选交接状态）
+          <span className="lg:hidden">　·　左右滑动查看完整表格</span>
         </p>
 
         {loading ? (

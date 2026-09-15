@@ -703,7 +703,7 @@ function SubmitPage() {
 
             <div
               id="file-preview"
-              className="h-[480px] w-full overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-white/10 dark:bg-ink"
+              className="h-[300px] w-full overflow-hidden rounded-xl border border-gray-200 bg-white sm:h-[480px] dark:border-white/10 dark:bg-ink"
             >
               {previewUrl && kind === 'pdf' && (
                 <iframe
@@ -713,7 +713,7 @@ function SubmitPage() {
                 />
               )}
               {previewUrl && kind === 'image' && (
-                <img className="mx-auto max-h-[480px]" src={previewUrl} alt={selectedFile.name} />
+                <img className="mx-auto max-h-[300px] sm:max-h-[480px]" src={previewUrl} alt={selectedFile.name} />
               )}
               {previewUrl && kind === 'other' && (
                 <p className="px-4 py-8 text-center text-xs text-gray-400">该文件类型不支持内嵌预览</p>

@@ -46,6 +46,7 @@
 | 逐文件设置（API） | `backend\.venv\Scripts\python.exe .tmp-test/per_file_settings_test.py` | 12 项全通过：两文件两套设置各自落库、代理 claim 逐文件带设置、非法纸张/份数 0/非法范围/非 JSON 一律 400、settings 比文件短时缺的回落任务级、不传 settings 时任务级设置仍生效 |
 | 文件预览（我的任务 / 管理员队列） | `node .tmp-test/ui-test10.mjs` | 4 项全通过：走两步流程提交后，「我的任务」点文件名弹窗预览渲染 iframe、管理员队列预览正常；页面 JS 错误 0 |
 | 两步提交 + 逐文件打印设置 | `node .tmp-test/ui-test13.mjs` | 19 项全通过：第一步选两文件后逐文件各自的设置互不影响、页面范围让预览跳到 `#page=2`、每张页数提示「按 4 页/张排版」、切换文件预览在 iframe/img 间切换、第二步「返回修改打印设置」不丢状态、提交成功卡片逐文件列设置、后端按文件存了两套 print_options |
+| 手机端适配 | `node .tmp-test/ui-test14.mjs`（390×844 触摸视口） | 17 项全通过：登录页/提交第一步与第二步/我的任务/任务队列/管理设置/我的配置/用户管理**均无页面级横向溢出**（390/390）、小屏侧栏默认在屏幕外（x=-240）、点汉堡滑出到 x=0、点导航自动收起、手机端完整走通两步提交并成功、队列表格 1001px 靠容器内滚动且带「左右滑动」提示；页面 JS 错误 0 |
 | 内嵌预览（投放区变预览面板） | `node .tmp-test/ui-test11.mjs` | 12 项全通过：拖入 PDF 后投放提示消失、面板显示「正在预览」并渲染 iframe，继续拖入图片后点文件名可切换（img 出现、iframe 让位）、「放大查看」走弹窗、「清空」回到投放区、提交后我的任务与管理员队列预览仍正常；页面 JS 错误 0 |
 
 **测试中修掉的真 bug（勿回退）**：
@@ -170,6 +171,7 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
 - **状态徽章取色**（6 个状态，勿改）：待审核 `bg-amber/15 text-amber-700 dark:text-amber`；已通过 `bg-brand/10 text-brand-dark dark:text-brand`；打印中 `bg-slate-teal/15 text-slate-teal`；已打印 `bg-emerald-500/10 text-emerald-600 dark:text-emerald-400`；已驳回 `bg-clay/10 text-clay`；打印失败 `bg-red-500/10 text-red-600 dark:text-red-400`。
 - **图标**：一律 `lucide-react`（`h-4 w-4` 行内 / `h-5 w-5` 标题与品牌 / `h-[18px] w-[18px]` 侧栏导航）；`components/Icons.tsx` 已废弃删除，不要再 import。
 - **外壳**：`App.tsx` 是参考实现——已登录 = 240px 可折叠侧栏（`w-60`↔`w-0`，主区 `ml-60`↔`ml-0` 过渡）+ 吸顶栏（`sticky top-0 bg-warm/80 backdrop-blur-md`，标题取自 `PAGE_META`）+ 右下角 toast；未登录 = 只有品牌条（登录页/回调页）。新页面照此风格写，不要再造导航。
+- **移动端适配（2026-09-15 起）**：断点用 Tailwind 默认（`lg` = 1024px）。① 侧栏：`<lg` 是**抽屉**（`fixed w-60` + `-translate-x-full` 收起，默认收起，点汉堡滑出、点遮罩或点导航自动收起，遮罩 `z-30`/侧栏 `z-40`）；`lg` 起才是常驻并把主区推到 `lg:ml-60`。② 内边距：`px-4 py-3 md:px-8 md:py-4` 一档缩放，副标题 `<sm` 隐藏。③ 预览高度随屏幕：提交页预览 `h-[300px] sm:h-[480px]`，弹窗 `h-[60vh] lg:h-[80vh]`。④ 表格保持 `min-w-*` + 容器 `overflow-x-auto`（页面本身不允许横向滚动），队列页在 `<lg` 提示「左右滑动查看完整表格」。⑤ 新增页面的验收要跑 `.tmp-test/ui-test14.mjs`（390×844 视口，检查每页 `documentElement.scrollWidth <= innerWidth`、抽屉行为、两步提交可走通）。
 - 复用组件（勿重造）：`Modal`（确认弹窗统一用它，不用 `window.confirm`）、`DropZone`（`previewInline` 时**选完文件把投放区变成预览面板**：内嵌 iframe/img + 切换文件 + 继续添加 + 清空 + 放大查看）、`FileChips`、`TextField`（所有文本输入）、`ThemeToggle`、**`FilePreview`**（预览弹窗：PDF→iframe、图片→img、其它→提示下载；给 `jobId`+`fileId` 由组件带 Bearer 取 blob，或给 `localUrl` 预览本地文件）。预览入口共三处：提交页（拖入即内嵌预览，可放大到弹窗）、我的任务（本人上传件，弹窗）、任务队列（管理员，弹窗）。
 - react-router-dom v7，路由集中在 `App.tsx`，页面在 `src/pages/`。
 - 管理端预览 PDF 用**同源** blob→iframe（`/api/jobs/{id}/files/{fid}`，需 Bearer 头，所以走 `fetch` + `URL.createObjectURL`，关闭时 `revokeObjectURL`）；跨域源无法内嵌预览。

@@ -56,7 +56,10 @@ function App() {
   const navigate = useNavigate()
   const location = useLocation()
   const [user, setUser] = useState<UserType | null>(getUser)
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  // 小屏（<1024px）默认收起侧栏（抽屉），大屏默认展开
+  const [sidebarOpen, setSidebarOpen] = useState(
+    () => typeof window === 'undefined' || window.innerWidth >= 1024,
+  )
   const [notice, setNotice] = useState('')
 
   // 挂载时若已有令牌，调 me() 验活并刷新用户信息
@@ -190,7 +193,7 @@ function App() {
     return (
       <div className="min-h-screen">
         <header className="sticky top-0 z-30 border-b border-gray-200/50 bg-warm/80 backdrop-blur-md dark:border-white/10 dark:bg-warm-dark/80">
-          <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
+          <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 md:px-6 md:py-4">
             <Link className="flex items-center gap-3" to="/">
               <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand text-white">
                 <Printer className="h-5 w-5" />
@@ -202,7 +205,7 @@ function App() {
             <ThemeToggle />
           </div>
         </header>
-        <main className="mx-auto max-w-7xl px-6 py-10">{routes}</main>
+        <main className="mx-auto max-w-7xl px-4 py-6 md:px-6 md:py-10">{routes}</main>
         {toast}
       </div>
     )
@@ -227,9 +230,9 @@ function App() {
     <div className="min-h-screen">
       {/* 侧栏 */}
       <aside
-        className={`fixed left-0 top-0 z-40 h-full overflow-hidden border-r border-gray-200/60 bg-white transition-all duration-300 dark:border-white/10 dark:bg-ink-soft ${
-          sidebarOpen ? 'w-60' : 'w-0'
-        }`}
+        className={`fixed left-0 top-0 z-40 h-full w-60 overflow-hidden border-r border-gray-200/60 bg-white transition-transform duration-300 dark:border-white/10 dark:bg-ink-soft lg:transition-[width] ${
+          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+        } ${sidebarOpen ? 'lg:w-60' : 'lg:w-0 lg:translate-x-0'}`}
       >
         <div className="flex h-full w-60 flex-col p-6">
           <div className="mb-10 flex items-center gap-3">
@@ -253,6 +256,10 @@ function App() {
                       : 'text-gray-500 hover:bg-warm hover:text-gray-800 hover:shadow-sm dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-gray-100'
                   }`
                 }
+                onClick={() => {
+                  // 小屏是抽屉：点完导航就收起，免得挡住内容
+                  if (window.innerWidth < 1024) setSidebarOpen(false)
+                }}
               >
                 <Icon className="h-[18px] w-[18px] shrink-0" />
                 <span className="whitespace-nowrap font-medium">{label}</span>
@@ -278,10 +285,19 @@ function App() {
         </div>
       </aside>
 
+      {/* 小屏抽屉打开时的遮罩：点击即收起 */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-black/40 backdrop-blur-sm lg:hidden"
+          aria-hidden
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
       {/* 主区 */}
-      <div className={`transition-all duration-300 ${sidebarOpen ? 'ml-60' : 'ml-0'}`}>
+      <div className={`transition-all duration-300 ${sidebarOpen ? 'lg:ml-60' : 'lg:ml-0'}`}>
         <header className="sticky top-0 z-30 border-b border-gray-200/50 bg-warm/80 backdrop-blur-md dark:border-white/10 dark:bg-warm-dark/80">
-          <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-4 md:px-8">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 md:px-8 md:py-4">
             <div className="flex items-center gap-4">
               <button
                 type="button"
@@ -293,7 +309,7 @@ function App() {
               </button>
               <div>
                 <h1 className="text-xl font-semibold text-gray-800 dark:text-gray-100">{meta.title}</h1>
-                <p className="text-xs text-gray-400">{meta.subtitle}</p>
+                <p className="hidden text-xs text-gray-400 sm:block">{meta.subtitle}</p>
               </div>
             </div>
 
@@ -315,7 +331,7 @@ function App() {
           </div>
         </header>
 
-        <main className="px-6 py-6 md:px-8">{routes}</main>
+        <main className="px-4 py-5 md:px-8 md:py-6">{routes}</main>
       </div>
 
       {toast}
