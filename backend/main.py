@@ -37,6 +37,8 @@ import config
 import constants
 import convert
 import db
+import api_docs
+import downloads
 import agent_api
 from agent_api import router as agent_router
 
@@ -1421,6 +1423,76 @@ def delete_job(job_id: int, user: dict = Depends(auth.require_admin)):
     return {"ok": True, "refunded": str(refunded)}
 
 
+# ── API 文档（登录可读，管理员可改）──
+
+API_DOCS_MAX = 200_000          # 文档正文上限（约 200KB，够写很长的文档了）
+
+
+class DocsBody(BaseModel):
+    content: str
+
+
+def _docs_payload(settings: dict) -> dict:
+    custom = bool(str(settings.get("api_docs_md") or "").strip())
+    return {
+        # 两份都去首尾空白：前端编辑器里看到的就是干净正文（出厂文档末尾带换行）
+        "content": str(settings.get("api_docs_md") or "").strip() or api_docs.DEFAULT_DOCS.strip(),
+        "custom": custom,                                   # False = 用的是出厂文档
+        "updated_at": str(settings.get("api_docs_updated_at") or ""),
+        "updated_by": str(settings.get("api_docs_updated_by") or ""),
+    }
+
+
+@app.get("/api/docs/api")
+def get_api_docs(user: dict = Depends(auth.get_current_user)):
+    """API 文档正文（Markdown）；未改过时给出厂默认那份"""
+    return _docs_payload(db.get_settings())
+
+
+@app.put("/api/docs/api")
+def update_api_docs(body: DocsBody, user: dict = Depends(auth.require_admin)):
+    """管理员改 API 文档；传空字符串 = 恢复出厂文档"""
+    content = (body.content or "").strip()
+    if len(content) > API_DOCS_MAX:
+        raise HTTPException(status_code=400, detail=f"文档太长（最多 {API_DOCS_MAX // 1000}KB）")
+    values = {
+        "api_docs_md": content,
+        "api_docs_updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "api_docs_updated_by": user["username"],
+    }
+    db.set_settings(values)
+    logger.info("API 文档已更新：%s（%s 字%s）", user["username"], len(content),
+                "，恢复出厂文档" if not content else "")
+    return _docs_payload(db.get_settings())
+
+
+# ── 虚拟打印机安装包下载（登录可下载）──
+
+@app.get("/api/downloads")
+def list_downloads(user: dict = Depends(auth.get_current_user)):
+    """安装包清单：哪些平台开放了、服务器上有没有、多大、指纹"""
+    packages = downloads.describe()
+    for item in packages:
+        item["size_text"] = downloads.human_size(item["size"]) if item["size"] else ""
+    return {"packages": packages}
+
+
+@app.get("/api/downloads/{package_id}")
+def download_package(package_id: str, user: dict = Depends(auth.get_current_user)):
+    """下载安装包（只认 downloads.PACKAGES 白名单里的 id，不接受路径）"""
+    found = downloads.find(package_id)
+    if not found:
+        raise HTTPException(status_code=404, detail="这个平台的安装包暂未开放（或服务器上还没放包）")
+    path, spec = found
+    logger.info("下载安装包：%s（%s，%s）", path.name, spec["label"], user["username"])
+    return FileResponse(
+        path,
+        media_type="application/zip",
+        filename=path.name,
+        headers={"Cache-Control": "no-store"},       # 换版本后别让浏览器拿旧包
+    )
+
+
 # ── 设置（admin）──
 
 @app.get("/api/settings")
@@ -1512,9 +1584,14 @@ def set_agent_link(body: AgentLinkBody, user: dict = Depends(auth.require_admin)
 
 @app.exception_handler(404)
 async def not_found(request: Request, exc):
-    """未匹配的非 /api 路径回退 index.html（SPA 路由用）"""
+    """未匹配的非 /api 路径回退 index.html（SPA 路由用）
+
+    接口判断要带边界：`/api` 或 `/api/...` 才算接口，别用 `startswith("/api")` ——
+    那样 `/apidocs`（一个正常的前端路由）会被当成接口，回一坨 JSON 而不是页面（2026-09-17 踩到）。"""
+    path = request.url.path
+    is_api = path == "/api" or path.startswith("/api/")
     index_file = config.DIST_DIR / "index.html"
-    if request.method in ("GET", "HEAD") and not request.url.path.startswith("/api") and index_file.exists():
+    if request.method in ("GET", "HEAD") and not is_api and index_file.exists():
         return FileResponse(index_file)
     detail = getattr(exc, "detail", None) or "请求的资源不存在"
     return JSONResponse({"detail": detail}, status_code=404)

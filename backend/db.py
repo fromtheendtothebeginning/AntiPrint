@@ -133,6 +133,10 @@ SETTINGS_DEFAULTS = {
     "anticraft_admin_users": "",
     # 允许发起授权的来源（Origin 白名单，逗号分隔），必须与 anticraft 后台登记的回调地址前缀一致
     "anticraft_origins": "http://127.0.0.1:8301,http://localhost:8301,http://localhost:3010,http://127.0.0.1:3010",
+    # 「API 文档」页的正文（Markdown）：空 = 用 api_docs.DEFAULT_DOCS 那份出厂文档
+    "api_docs_md": "",
+    "api_docs_updated_at": "",
+    "api_docs_updated_by": "",
 }
 
 

@@ -167,3 +167,31 @@ export interface AdminUserRow {
   /** 账户余额（元） */
   balance: number | string
 }
+
+/** API 文档页（管理员可在页面上直接改，正文是 Markdown） */
+export interface ApiDocs {
+  content: string
+  /** false = 用的是出厂默认文档（管理员没改过） */
+  custom: boolean
+  updated_at: string
+  updated_by: string
+}
+
+/** 虚拟打印机安装包（一个平台一条） */
+export interface DownloadPackage {
+  id: string
+  label: string
+  arch: string
+  requirements: string
+  note: string
+  /** 是否已开放下载（暂未开放的平台只有说明） */
+  open: boolean
+  /** 服务器上是否真的放了这个包 */
+  ready: boolean
+  filename: string
+  version: string
+  size: number
+  size_text: string
+  sha256: string
+  updated_at: number
+}

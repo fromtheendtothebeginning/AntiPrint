@@ -3,6 +3,8 @@
 用户远程提交打印任务（上传文件 + 配送地址），管理员审核通过后由**本机打印代理静默出纸**。三进程：React+TS 前端 / FastAPI+MySQL 服务器 / Windows 打印代理。
 
 > **项目状态（2026-09-14）**：三端代码已落地，并已部署到阿里云（systemd `antiprint-api` + nginx，管理员账号 `end`）。文档分工：`README.md` 面向使用者、**`docs/admin-guide.md` 面向管理员与运维**（建管理员、审核交接、在接打印机的机器上装代理、故障排查）、本文面向 AI 代理（契约、坑、红线）。
+>
+> **补充（2026-09-16）**：新增两个**用户侧客户端**，都不参与线上部署、改动不碰既有三端：`vprinter/`（虚拟打印机，打印 = 转 PDF 提交）与 **`miniprogram/`（kbone 微信小程序，只做提交/查询，不做管理端）**。
 
 ## 已定决策（勿擅自改动，改动前先问用户）
 
@@ -12,11 +14,14 @@
 | 后端 | Python 3.14 + FastAPI + PyMySQL + **MySQL 8**（与 `D:\anticraft\index`、`antiClass` 一致） |
 | 静默打印 | **本机常驻打印代理**领取任务后静默打印（不用 `window.print()`，浏览器无法程序化选打印机/份数） |
 | 计费 | **管理员/root、anticraft 账号、白名单（`settings.free_users`）免费**；其余账号按「张数 × 单价」扣余额，单价存 `settings.print_price`（默认 0.1 元/张，管理设置可改）。**提交时扣**、驳回/撤回/未出纸的删除**自动退**；充值/付款码**暂未实现**（余额由管理员在「用户管理」手工调整）。见「账户余额与计费」 |
+| API 文档页 | **「API 文档」页的正文是 Markdown，存 `settings.api_docs_md`**（空 = 用 `backend/api_docs.py` 的 `DEFAULT_DOCS` 出厂文档）。`GET /api/docs/api` **登录可读**；`PUT /api/docs/api` **仅 admin**（body `{content}`，传空 = 恢复出厂）。前端用 `marked` + `DOMPurify` 渲染（`.md-body` 那套样式在 `index.css`）。**改接口时同步改 `api_docs.py`**（文档是随代码发布的默认版本） |
+| 虚拟打印机页 | **「虚拟打印机」页提供下载 + 使用说明**；清单在 `backend/downloads.py`（**当前只开放 Windows x86-64 的 zip**，macOS/Linux 标 `available: False` = 页面显示「暂未开放」）。包放 `backend/data/downloads/`（开发期也认仓库 `dist/`），`GET /api/downloads` 给清单、`GET /api/downloads/{id}` 流式下载（**都要登录**，只认白名单 id、不接路径）。`deploy/pack.sh` 会单独 scp 最新的 `dist/AntiPrintVPrinter-*.zip` 上去并删掉旧版本 |
 | 打印内容 | **仅文件上传**：PDF / 图片（png/jpg）直接可打印；**Word / PPT 上传时服务端先转 PDF**（LibreOffice headless，Windows 无 LibreOffice 时用本机 Office COM，见「Office 转 PDF」） |
-| 虚拟打印机 | **用户端只要「打印成 PDF 再提交」**：跨平台桌面程序（`vprinter/`，Python + tkinter + pystray）建一台名叫 `ANTIPRINT` 的系统打印队列，打印到它就等于「转 PDF + 走 `POST /api/jobs` 提交到本站」。Windows 用系统自带的 `Microsoft Print To PDF` 驱动 + **固定文件端口**（不写驱动、不写内核组件）；macOS/Linux 用 **CUPS 后端**。**不做**「打印完自动审批」（仍走管理员审核），也不碰实体打印机。见「虚拟打印机」 |
+| 虚拟打印机 | **用户端只要「打印成 PDF 再提交」**：跨平台桌面程序（`vprinter/`，Python + tkinter + pystray）建一台名叫 `AntiPrint-<版本>`（默认 `AntiPrint-1.0.0`，驼峰 + 版本号）的系统打印队列，打印到它就等于「转 PDF + 走 `POST /api/jobs` 提交到本站」。Windows 用系统自带的 `Microsoft Print To PDF` 驱动 + **固定文件端口**（不写驱动、不写内核组件）；macOS/Linux 用 **CUPS 后端**。**不做**「打印完自动审批」（仍走管理员审核），也不碰实体打印机。见「虚拟打印机」 |
 | 本地端口 | 后端 **8301**、Vite **3010**（3000/8000 被 `index`、**8300 被 natpierce 内网穿透工具占用**，2026-09-14 实测；3306 有 MySQL 在跑） |
 | 目标打印机 | `HP LaserJet Professional P1106`（USB001，本机唯一真实打印机，**主机型/GDI**）。**注意**：管理页「保存设置」会把下拉当前值一起写库，2026-09-14 18:25 被改成过 `Microsoft Print to PDF`（虚拟队列，静默打印会弹保存对话框）——改打印机后务必确认存的是 P1106。 |
 | 账号体系 | **anticraft 账号绑定登录**（协议：`D:\anticraft\index\docs\account-binding-api.md`）。① 主用：OAuth 授权码模式——前端跳 `GET /api/oauth/anticraft/start`（302 到 anticraft `/bind`）→ 用户确认 → 回跳 `GET /api/oauth/anticraft/callback`（服务端用 client_secret 换 token）→ 按 **anticraft 用户 ID** 绑定/创建本地账号（`users.source='anticraft'`、`users.anticraft_id`）→ 302 回前端落地页带一次性 ticket → `POST /api/oauth/anticraft/exchange` 换本地 JWT。密码不经过本项目。② 备用：`POST /api/login/anticraft` 用账号密码向 anticraft 校验（自动建号 + 密码同步）。③ 本地自建账号同名时**一律拒绝**（防顶号，含 admin）。**启用跳转授权必须先在 anticraft 后台「绑定应用」登记** `client_id`/`client_secret` 与**精确回调地址**，再填进「打印设置」（`anticraft_base` / `anticraft_client_id` / `anticraft_client_secret` / `anticraft_origins`） |
+| 微信小程序 | **kbone（`mp-webpack-plugin`）独立工程 `miniprogram/`**：`frontend/`/`backend/`/`agent/` 源码不动，只通过 webpack 别名 `@shared → ../frontend/src` **只读**复用接口类型与状态/选项常量（口径与网站永远一致）；React 17（kbone 需要）+ 手写 wxss 类名（不用 Tailwind）。**范围限用户端**：登录/提交/我的任务/我的余额/我的配置五个 Tab 页，**不做管理端、不做头像、不做 anticraft 跳转授权**；提交一次只能一个文件（`wx.uploadFile` 限制，后端也没有追加文件接口）。见「微信小程序（kbone）」 |
 
 ## 核心流程（端到端时序）
 
@@ -66,9 +71,14 @@
 | 账户余额与计费（2026-09-15） | `backend\.venv\Scripts\python.exe .tmp-test/billing_test.py`（35 项）+ `node .tmp-test/ui-test20.mjs`（12 项） | API：默认单价 0.1、普通本地账号计费、余额 0 提交 **402 且不建单不扣钱**（detail 带 code/cost/balance/sheets）、充值后按 1 页×1 份扣 0.1、**3 份=0.3 / nup 2×2 且只打 1 页=0.1 / PPT 3 页=0.3**、**驳回与撤回各退回 0.1**（流水有「驳回退费」）、admin/anticraft/白名单三种免费、单价可改（0.5 生效，abc/500 各 400）、**调账权限**（普通用户 403、扣成负数 400、金额 0 400）。UI：用户管理页余额列 + 「调整余额」弹窗（调完列表刷新成 1.00）、我的余额页（¥1.00 / 计费账号 · 0.1 元/张 / 充值暂未开放 / 管理员调账 +¥1.00）、提交页「按 0.1 元/张 计费…当前余额 1.00 元」、成功卡片「本次扣费 0.10 元 + 余额 0.90 元」、余额不足弹**付款码（暂未开放）**占位（应付/余额/去我的余额）、管理员显示「免费账号」；页面 JS 错误 0 |
 | 计费上线后既有用例回归（2026-09-15） | 见 AGENTS.md 验证记录其余各行 | e2e 29/29、e2e2 26/26、role 19/19、office 34/34、ui-test13 19/19、ui-test14 22/22、ui-test16 16/16、ui-test17 13/13、ui-test19 16/16 —— 全部用例的测试账号已改为「注册后由管理员充 100 元」，否则新账号余额 0 会被 402 拦住 |
 | Office 转 PDF **线上部署**（2026-09-15） | `bash deploy/pack.sh` → `backend\.venv\Scripts\python.exe .tmp-test/prod_office_check.py`（口令从 `PROD_ADMIN_PW` 环境变量读，脚本不落口令） | 部署后：线上首页引用新 dist（`index-DNmMwP_w.js` 内含「Word/PPT 会先转成 PDF」文案）、`POST /api/preview/office` 返回 401（新接口已上线）、**线上提交 docx 成功且预览拿到 34532B 的 PDF、`?download=1` 给原 zip**、测试任务已删除（未审批 → 不会出纸）；服务器 soffice 用后端同款命令实跑 Word 2.7s / PPT 2.6s |
-| **虚拟打印机**（2026-09-15） | `backend\.venv\Scripts\python.exe .tmp-test\vprinter_test.py`（81 项，开头等 61 秒腾清登录限速窗口；用完删掉自己建的任务） | 81/81 全通过。**真机网站链路**：模拟打印 → 提交 → 网站上出现「待审核」任务（文件名/备注/charge=0.10 都对）、余额 5.00→4.90；**令牌复用**（把 `client.login` 换成抛异常的桩，第二次提交照样成功）；**跟随网站默认配送**（配置留空 → 任务地址 = `/api/profile` 里的默认地址）；「配送但没地址」提前提示且不建单；余额 0 → 402 不扣款；密码错 → 提示且**不把异常抛出流水线**（曾会崩）；服务器连不上 → 1/2/4 秒重试 3 次后归档 failed；**CUPS 后端**（用 Git Bash 的 `sh` 实跑）落盘 + 边车 key=value 被解析 → 上传名「季度报告.docx → 季度报告.pdf」、按打印对话框的份数 2 计费 0.20；PostScript 无 Ghostscript 时提示明确（本机 ps2pdf 是包装器、退出码 0 不产出，已能诊断出来）；**真起一个守护进程**：写落盘文件 → 几秒内自动提交（端到端）、第二个进程被单实例锁拒绝（退出码 1）；重启不重复提交同一份落盘文件；**自启动开关真写/删 HKCU Run**（界面勾选与托盘菜单都验了）；**配置界面**（真开 Tk）回显/保存/换账号清令牌/刷新状态；托盘图标 64×64 像素级校验 + 菜单项与回调；`--status`/`--once`/`--selftest`/`--simulate` 退出码。**托盘图标在 Windows 右下角实测显示**（`powershell -File .tmp-test\tray_check.ps1` 列通知栏 + `tray_flyout_check.ps1` 点开「显示隐藏的图标」溢出层，能看到 tooltip「AntiPrint 虚拟打印机 · 正在监听打印任务」）；`install-printer-windows.ps1 -DryRun` 在非提权会话下正确识别驱动 `Microsoft Print To PDF` 并只打印计划，`uninstall-*.ps1` 非提权时按 1 退出。**未实测**：真正用管理员建 Windows 队列（本机会话非管理员）、真实打印对话框出 PDF、macOS/Linux 上的 CUPS 安装与本机打印 |
+| **虚拟打印机**（2026-09-16） | `backend\.venv\Scripts\python.exe .tmp-test\vprinter_test.py`（163 项，开头等 61 秒腾清登录限速窗口；用完删掉自己建的任务） | 163/163 全通过（2026-09-17 增补：**托盘勾选现读磁盘**（把配置文件的 notify_popup 翻一下，菜单回调立刻读到新值；开机自启动读系统注册表）、**手动启动开配置界面**（`wants_settings_window` 四条判定 + 真起一个无参数守护进程：窗口进程出现、日志写「手动启动：打开配置界面」；`--silent` / `--no-tray` / `NO_GUI` 都不弹）、**底部两个勾选框勾了即存**（`notify_popup` / `autostart` 立刻落盘并有提示，两个 chk 都挂了 command）、**匹配规则按形态收窄**（源码形态的规则里没有 `AntiPrintVPrinter.exe`、exe 形态只认它）；另：**点窗口 × 时问「只关界面 / 退出程序」**（13 项）—— 出厂默认「每次询问」、`close_action` 手写非法值读回来兜成 `ask`；「运行状态」页三个单选改完立刻落盘且给提示；选「只关界面」窗口关了而**真守护进程照旧在跑**；弹窗里点「取消」窗口留着、后台不动；选「退出程序」**后台服务真的没了**（进程列表空）且勾「记住我的选择」后 `close_action=quit` 落盘、下一次 × 不再询问（询问次数 2 → 2）；另：**退出会连配置界面窗口一起关干净** —— 按命令行里的 `--settings` 精确匹配配置界面进程、连同启动器父子两个一起停（用例实测：认出 2 个窗口进程、守护 pid 不在里面、停掉 2 个后剩 0 个），而**守护进程不受影响**（进程还在跑）；只关配置界面窗口不退出程序（后台服务继续监听）；另：单实例锁被占时——第二个实例拿不到锁、能认出「别的实例」（不含自己）、持有者退出后锁能立刻被接管、接管弹窗只在窗口程序（`sys.stdout is None`）里弹（有控制台只打印一句，自动化不会被弹窗卡住）；另：队列名 = `AntiPrint-1.0.0`（驼峰 + 版本号、无空格）、落盘文件跟着队列名走、自检/测试的环境变量覆盖仍优先、老配置里的 `ANTIPRINT` 自动升成新名字、用户自定义队列名不动；另：界面分成三个子界面（网站账号/提交选项/运行状态，二级菜单切换、三页叠同一格 raise）、窗口压到 780×600、底部操作条固定在窗口内且在所有页之下；另：图标取自网站 logo 且与 `frontend/public/apple-touch-icon.png` **逐像素一致**、失败态换成砖红、界面顶部 logo 44×44、底部操作条固定在窗口内、「提交后弹窗提示」默认不勾且关闭时不发气泡只更新图标与悬停文字、保存后 `notify_popup` 落盘、托盘菜单含「提交后弹窗提示」，默认服务器线上站点）。**真机网站链路**：模拟打印 → 提交 → 网站上出现「待审核」任务（文件名/备注/charge=0.10 都对）、余额 5.00→4.90；**令牌复用**（把 `client.login` 换成抛异常的桩，第二次提交照样成功）；**跟随网站默认配送**（配置留空 → 任务地址 = `/api/profile` 里的默认地址）；「配送但没地址」提前提示且不建单；余额 0 → 402 不扣款；密码错 → 提示且**不把异常抛出流水线**（曾会崩）；服务器连不上 → 1/2/4 秒重试 3 次后归档 failed；**CUPS 后端**（用 Git Bash 的 `sh` 实跑）落盘 + 边车 key=value 被解析 → 上传名「季度报告.docx → 季度报告.pdf」、按打印对话框的份数 2 计费 0.20；PostScript 无 Ghostscript 时的处理按实测走（2026-09-17 修掉分支判定 bug 后，**本机 ps2pdf 能真转出 PDF**：换成「换个当前目录结果一致（分支判定没串）」+「当前目录不会多出那个叫 `-o` 的文件」+「转换后的 PDF 进 sent/、原件不被反复重试」+「`_work/` 不留残留」四条，见「真 bug」第 14、15 条）；**真起一个守护进程**：写落盘文件 → 几秒内自动提交（端到端）、第二个进程被单实例锁拒绝（退出码 1）；重启不重复提交同一份落盘文件；**自启动开关真写/删 HKCU Run**（界面勾选与托盘菜单都验了）；**配置界面**（真开 Tk）回显/保存/换账号清令牌/刷新状态；托盘图标 64×64 像素级校验 + 菜单项与回调；`--status`/`--once`/`--selftest`/`--simulate` 退出码。**托盘图标在 Windows 右下角实测显示**（`powershell -File .tmp-test\tray_check.ps1` 列通知栏 + `tray_flyout_check.ps1` 点开「显示隐藏的图标」溢出层，能看到 tooltip「AntiPrint 虚拟打印机 · 正在监听打印任务」）；`install-printer-windows.ps1 -DryRun` 在非提权会话下正确识别驱动 `Microsoft Print To PDF` 并只打印计划，`uninstall-*.ps1` 非提权时按 1 退出。**未实测**：真正用管理员建 Windows 队列（本机会话非管理员）、真实打印对话框出 PDF、macOS/Linux 上的 CUPS 安装与本机打印 |
 
-| **虚拟打印机 exe 分发包**（2026-09-15） | `bash deploy/pack-vprinter.sh` → `backend\.venv\Scripts\python.exe .tmp-test\vprinter_exe_test.py`（32 项） | 32/32 全通过。包内 exe 23MB（PyInstaller 单文件，冷启动实测 5.5~6.6 秒）：`--status` 输出可解析且自报「运行形态 exe / 程序目录 = exe 所在文件夹」、`--selftest` 逐项有输出（窗口程序靠 `AttachConsole` 接到了调用方控制台）、未配置账号时退出码 1；**端到端**：临时 HOME 写一份账号配置 → `exe --simulate test-print.pdf` → exe 自己登录并提交 → 网站上出现「待审核」任务（文件名/备注对、扣 0.10、令牌写回配置）；**exe 常驻后 Windows 右下角通知区溢出层里能看到托盘图标**（tooltip「AntiPrint 虚拟打印机 · 虚拟打印机队列还没安装，见 README.txt」——正好验证了启动提示不再被盖掉）；冻结形态 `launch_argv("--settings")` = `[exe, --settings]`、`autostart_command()` = `"<exe>"`、源码形态仍带 `virtual_printer.py`；**`exe --settings` 真拉起配置窗口**（Win32 枚举顶层窗口拿到标题「AntiPrint 虚拟打印机 · 配置」，说明 tkinter/tcl 已打进包）；zip 内容：install/ 六个脚本齐全、README 带 BOM+CRLF、bat 纯 ASCII+CRLF 且优先调用 exe、无 config.json/日志/令牌；**`stop-vprinter.bat` 能把单文件 exe 的父子进程一起停干净（剩余 0 个）**。**未实测**：真机装队列后从打印对话框走一遍（本机非管理员）、exe 在无 Python 的干净机器上运行（本机装着 Python，只能证明包里不含 Python 依赖） |
+| **虚拟打印机 exe 绿色版**（2026-09-16） | `bash deploy/pack-vprinter.sh` → `backend\.venv\Scripts\python.exe .tmp-test\vprinter_exe_test.py`（56 项） | 56/56 全通过（2026-09-17 增补：**4b 退出** —— 冻结形态的配置界面（`exe --settings`，解包器父进程 + 程序子进程共 2 个）被 `close_settings_windows()` 整树关掉（停 2 个 → 剩 0 个），**同一台机器上跑着的守护进程进程数 2→2 不受影响、日志无 ERROR**（用例通过 `.tmp-test/settings_close_helper.py` 从另一个进程调产品代码：命令行里不能出现 `--settings`，否则会被自己的匹配规则停掉）；另：exe 自带 `assets/antiprint-logo.png` —— 从没有 frontend 目录的临时目录里跑，图标仍是网站 logo；exe 资源图标 = 网站 logo；用例只停自己那份副本，不会误杀用户正在跑的 exe）。包里 exe 23MB（PyInstaller 单文件，冷启动实测 5.5~6.6 秒）。**绿色模式**：把 exe 拷到一个带中文+空格的临时目录直接跑 → `--status` 自报「数据模式 = 绿色模式（程序旁边）」且数据目录就是 exe 旁边的 `AntiPrintVPrinter-data\`、`--init-config` 真的把 config.json 写在那儿、实例锁在 `%LOCALAPPDATA%\AntiPrintVPrinter`（机器级，防两份副本重复提交）；拿一个同名**文件**占住目录名时自动回落「用户目录」且不报错。**队列自助安装**：非管理员跑 `--install-printer` → 退出码 1 + 明确提示「需要管理员权限」+ 给出可抄的命令，且**系统里没有留下半截改动**（`C:\ProgramData\AntiPrint` 未被创建）；提权命令构造成 `[exe, "--install-printer"]`（runas 再跑一遍自己）。**端到端**：临时 HOME 写一份账号配置 → `exe --simulate test-print.pdf` → exe 自己登录并提交 → 网站上出现「待审核」任务（文件名/备注对、扣 0.10、令牌写回配置）；**exe 常驻后托盘图标确实挂上了系统托盘**：以应用日志里的就绪信号为准（`Tray.run(setup=…)` 回调在 Shell_NotifyIcon 成功后才执行，记一行「托盘图标已显示（系统托盘已接受；图标取自 antiprint-logo.png…）」）；UI Automation 那条路**只在部分时候可用** —— Win11 的「显示隐藏的图标」按钮不再支持 Invoke（报 Unsupported Pattern），溢出层打不开就枚举不到，用例里降级成 `[SKIP]` 提示不算失败（12:57 同一套检测确实看到过图标，tooltip 是「AntiPrint 虚拟打印机 · 正在监听打印任务」）；冻结形态 `launch_argv("--settings")` = `[exe, --settings]`、`autostart_command()` = `"<exe>"`、源码形态仍带 `virtual_printer.py`；**`exe --settings` 真拉起配置窗口**（Win32 枚举顶层窗口拿到标题「AntiPrint 虚拟打印机 · 配置」，说明 tkinter/tcl 已打进包）；zip 内容：install/ 六个脚本齐全、README 带 BOM+CRLF、bat 纯 ASCII+CRLF 且优先调用 exe、无 config.json/日志/令牌/AntiPrintVPrinter-data（打包脚本会把自检产生的数据目录清掉并校验）；**`stop-vprinter.bat` 能把单文件 exe 的父子进程一起停干净（剩余 0 个）**。另有源码侧回归：托盘菜单含「安装/修复队列/卸载队列/打开数据目录」、首次使用引导判定（空白配置→True、配好且提示过→False）。**未实测**：真机点「一键安装打印机队列」走完 UAC 后队列真的建出来（本机非管理员会话，只能验到提权前的提示与命令构造）、真机装队列后从打印对话框走一遍、exe 在无 Python 的干净机器上运行（本机装着 Python，只能证明包里不含 Python 依赖） |
+
+| **微信小程序（kbone）**（2026-09-16） | `cd miniprogram && npm.cmd run build`（webpack + 放进 miniprogram_npm）→ `npm.cmd run typecheck` → `node .tmp-test/miniprogram_test.cjs`（44 项，在仓库根跑） | 44/44 全通过：用例在 Node 里直接跑 kbone 的 `miniprogram-render`，把 webpack 产物里的 5 个页面真的挂起来（读 `dist/miniprogram/pages/*/index.js` 注册的 `Component`，驱动 `attached`/`onLoad`，再由 kbone 调 `window.createApp()`）。**渲染**：登录页品牌标题 + 登录/注册 + 两个输入框 + `page-root`；提交页「提交打印」+ 计费提示（0.1 元/张、余额 1.00）+ 默认配送与地址（读 input 的 value）+ 选文件入口 + 份数/纸张；任务页 任务号/状态徽章（待审核=amber、待取件=violet）/文件名 + 逐文件设置（2 份 · A3）/地址/备注/取件提示/撤回按钮；余额页 金额 + 流水（-0.20 / +2.00）+ 充值暂未开放；配置页 用户名/角色/默认地址/退出登录。**交互（用 kbone 的冒泡 CustomEvent 模拟点击）**：选文件后显示「报告.docx · 2 KB」→ 点提交 → `wx.uploadFile` 字段名 `files`、formData `delivery_mode=配送 / address=24 号楼 1016 / copies=1 / paper=A4`、URL 指向 `/api/jobs`、成功后显示「任务 #33 / 0.10」与 toast；402 响应 → 显示「余额不足：应付 0.10 元，当前余额 0.00 元（付款码暂未开放）」；点「撤回」→ 弹「撤回任务 #12」确认 → 调 `POST /api/jobs/12/withdraw` → toast「任务 #12 已撤回」；点文件名 → `wx.downloadFile` 带 `Authorization` 头到 `/api/jobs/12/files/5`。**登录兜底**：无令牌时页面不渲染内容、不发任何请求、`location` 改为 `/login`；有令牌时进登录页自动跳 `/pages/submit/index`。另：`tsc --noEmit`（strict）0 错误；产物布局逐项核对（`dist/project.config.json` 在项目根、含 appid + libVersion + urlCheck=false 且**没有** miniprogramRoot；`dist/miniprogram/app.json` 5 页 + tabBar 4 项 + window 暖色；`pages/jobs/index.json` 开了 `enablePullDownRefresh`；`app.wxss` 里 `@import "common/app.css"` 且 `common/app.css` 含自定义类；`common/*.js` 头是 `module.exports=function(window,document){...}`；`miniprogram_npm/` 内 render + element 齐全）。**开发者工具实测（2026-09-16）**：导入 `miniprogram/dist` 后先报 `[WXSS 文件编译错误] path common/app.css not found from ./app.wxss`（当时样式抽成了 `.css` —— 小程序 `@import` 只认 `.wxss`，文件在也不认），又因为早先的布局把项目根设在代码目录上一层而报过 `[app.json 文件内容错误] 在项目根目录未找到 app.json`。现已改成**样式抽成 `.wxss`（`MiniCssExtractPlugin filename: '[name].wxss'`）+ `dist/` 既是代码根也是项目根（不写 miniprogramRoot）**，导入路径就是 `miniprogram/dist`；构建 + `tsc` + 44 项用例重跑全绿，`app.wxss` 的 `@import` 目标 `common/app.wxss` 存在、产物里已无 `.css` 引用。**未实测**：wxss 实际渲染效果、`miniprogram-element` 的 wxml 投影、真实小程序 API（chooseMessageFile/openDocument）、合法域名与真机 —— 这些要微信开发者工具 + 自己的 AppID（现为 `touristappid` 游客模式） |
+
+| 提交后回到提交页主界面（2026-09-16） | `node .tmp-test/ui-test-reset-submit.mjs`（8 项） | 8/8 全通过：提交成功卡片出现 → 切「我的任务」再切回「提交打印」在第一步（投放区可见、没有第二步按钮/成功卡片）；**停在成功卡片上直接点侧栏「提交打印」（同一地址）也回到第一步**（修的就是这条）；测试任务已删、页面 JS 错误 0 |
+| **API 文档页 + 虚拟打印机页**（2026-09-17） | `backend\.venv\Scripts\python.exe .tmp-test/api_docs_test.py`（25 项）+ `node .tmp-test/ui-test-docs-vprinter.mjs`（26 项） | 接口 25/25 全通过：文档未登录 401 / 登录可读 / 未改过时 `custom=false` 且正文 = 出厂文档 / 普通用户 PUT 403 / admin PUT 200 且回 `updated_by`+时间 / 改完持久化（另一个账号读到新版本）/ 超长（200001 字）400 / 传空 = 恢复出厂；下载清单三个平台（只 `windows-x64` `open+ready`，报出文件名/版本/22.6MB/64 位 sha256，且**不含任何服务器路径**）/ 未登录 401 / 未开放平台 404 / **乱写 id 含 `../etc/passwd` 一律 404**（不接受路径）/ 下载 200 且是 zip（`PK\x03\x04`、字节数 = 清单大小、**sha256 与清单一致**、`Content-Disposition: attachment` + `no-store`）/ 服务器给的就是仓库 `dist/` 里那个包。UI 26/26 全通过：普通用户能读文档（**渲染出 5 个表格、8 个代码块**、能看到 `POST /api/jobs` 与 requests 示例）但没有「编辑文档」按钮；管理员「编辑文档」→ 改名/加内容 → 保存 → 页面渲染新内容 + 页头变「本站自定义文档」+ 服务端 `custom=true` → 「恢复默认」回到出厂文档；虚拟打印机页三种平台卡片、Windows 只有一个「下载 zip」、macOS/Linux 标「暂未开放」、四步说明与常见问题齐、SHA-256 有展示；**浏览器真的下载到 zip 且字节数与清单一致**（23738526）；手机端（390）两页都无横向溢出；页面 JS 错误 0 |
 
 **测试中修掉的真 bug（勿回退）**：1. **代理把 `dry_run` 判断成恒真** —— 服务端下发的是字符串 `"0"`，`bool("0")` 在 Python 里是 `True`，导致代理永远只干跑却回报成功（任务被误标已打印）。已改为 `truthy()` 解析（`print_agent.py`），**任何服务端开关值都要走它**。
 2. **任务列表缺提交人** —— 管理页「提交人」列空白，`db.list_jobs/get_job` 已 JOIN `users.username`。
@@ -83,16 +93,89 @@
    所以 `attach_console()` 只在「跑完就退出」的命令行模式里调用（见「打成 Windows exe」一节）。
 8. **托盘启动提示被 `Tray.run()` 盖掉** —— `run()` 原来写死设成「正在监听打印任务」，把 `run_daemon()` 刚设的
    「队列还没安装 / 配置不完整」警告覆盖了，首次使用的人看不到该看的那句话。现在 `run()` 沿用已有状态文字与颜色。
+9. **打包脚本 `rm -rf` 删掉了用户正在用的绿色数据目录**（2026-09-16 真实事故）—— `pack-vprinter.sh` 的组装步骤原本是
+   `rm -rf "$STAGE"` + 「校验时再删 `$STAGE/AntiPrintVPrinter-data`」，而绿色版用户很可能**就在 `dist/AntiPrintVPrinter/`
+   里双击 exe 用着**：重跑一次打包就把他的 `AntiPrintVPrinter-data/`（账号配置、日志、提交记录）删了。
+   现在改成「只删自己产出的文件」（exe/install/README/config.example.json/requirements.txt/*.bat），
+   打包时复制到 `$DIST/.vprinter-pack/` 再在副本里排除数据目录，压缩改用 Python `zipfile`（Git Bash 里那个 zip 是 MiKTeX 的，
+   对 Windows 绝对路径处理不靠谱）。**给别人打包时永远不要 `rm -rf` 整个输出目录。**
+10. **单实例锁探测把「在跑」误判成「没在跑」，还会抛 PermissionError 卡死进程**（2026-09-16，查了很久）——
+   `msvcrt.locking(fd, LK_NBLCK, 1)` 锁的是**当前文件位置**那一字节，而原来用文本流 `"a+"` 打开：守护进程先锁第 0 字节、
+   再把 pid 写进去（文件变 5 字节），第二个进程用 `"a+"` 打开时光标落在文件尾 → 它锁的是**第 5 字节**（没人占）→
+   `acquire()` 返回 True → `daemon_running()` 报「没在跑」；随后它还要 truncate/write 第 0 字节，撞上对方的锁 →
+   `PermissionError` 抛出。**冻结成窗口程序后 PyInstaller 会弹一个看不见的「Fatal error」对话框等人点击**，
+   于是 `--status` 进程活着但永不退出（自动化里卡了 24 分钟才发现）。修法：`SingleInstance` 改用 `os.open` + 显式
+   `lseek(0)` 锁第 0 字节，**只锁不写**（空文件足够表达占用），整个过程包 try；另在 `virtual_printer.py` 的
+   `__main__` 加顶层兜底把异常写进日志再退（不让 PyInstaller 弹对话框）。
+11. **「双击 exe 没反应」= 单实例锁被占 + 窗口程序只写日志**（2026-09-16 用户实际遇到，2026-09-17 修复）——
+   旧实例还在跑（占着机器级锁）时，新一次的启动会 `say(...)` + 退出；而窗口程序没有控制台，
+   `say()` 退化成写日志 → **用户屏幕上什么都没有**，连点三次都「打不开」（日志里三行一样的
+   「已经有一个虚拟打印机守护进程在跑了」）。修法：`take_over_lock()` —— 有控制台（命令行/管道，
+   自动化也走这条）只打印一句；窗口程序则弹窗说明「右下角托盘图标就是它 / 右键点它开配置界面」，
+   并给一个**接管**选项：点「是」→ `stop_other_instances()` 结束旧实例（按进程名匹配
+   `AntiPrintVPrinter.exe` 和 `python* + virtual_printer`，**排除自己与自己的父进程** —— 单文件 exe
+   父子同名，杀掉父进程会把这次启动一起带走）→ 重试拿锁 → 继续启动。同一轮还把
+   `Remove-PrinterPort` 失败改成非致命（`ERROR_BUSY 0x800700aa`：队列里还有任务时端口删不掉，
+   原来会让整个「卸载」报失败，现在只提示「重启后再清一次」）。
+   **教训**：窗口程序里任何"只写日志"的退出路径都等于「用户看不见」——要么弹窗，要么改状态。
+12. **用例别去调 `stop_other_instances()`**（2026-09-16 误杀）—— 它按进程名匹配，是给「升级时接管旧副本」
+   用的（有用户确认）。`.tmp-test/vprinter_test.py` 的 7b 段一开始直接调它，把用户正在跑的实例一起停掉了。
+   现在用例只停「自己启动的那个 PID」，验的是「持有者退出后锁会被释放」这个机制。
+13. **「托盘图标关闭后程序没有真正关闭」= 配置界面窗口是独立进程，退出时没人关它**（2026-09-16 用户实际遇到）——
+   配置界面按设计另起进程（关窗口不停后台服务，macOS 上也不跟托盘抢主线程），所以托盘「退出」只停了
+   守护与图标，**那个窗口（可能就是双击 exe 时开的那个）还留在屏幕上**，看任务管理器/任务栏都像「没关掉」。
+   修法：`vp_platform.close_settings_windows()` —— 按**命令行里有 `--settings`** 精确匹配
+   `AntiPrintVPrinter.exe` / `python* virtual_printer`，再连同它们的子进程一起停（单文件 exe 是
+   「解包器父进程 + 程序子进程」，只停父进程会留下子进程）；`Tray._quit()` 里先关窗口再停图标，
+   并写日志「用户选择退出：正在关闭配置界面与后台服务」。**别改成按进程名杀**（会连带别人的副本），
+   也**别把守护进程一起匹配进来** —— 判定条件是 `--settings`，守护进程的命令行里没有它。
+   配套：`--settings` 的拉起统一走 `vp_platform.spawn_settings_window()`（托盘菜单与首次引导共用一份）。
+   **注意**：只关配置界面窗口**不应该**退出程序（后台服务要继续监听），这条行为写进 `vprinter/README.txt` 了。
+   **后续（2026-09-17 用户要求）**：既然「关窗口」和「退出程序」都合理，就别替用户决定 —— 点 × 时**问一句**
+   「只关界面 / 退出程序」，可勾「记住我的选择」（写 `config.close_action`），并在「运行状态」页留一个
+   单选随时改回来；「退出程序」那条路走 `stop_daemon()`（命令行里**没有** `--settings` 的就是守护进程）。
+   实现见下面「配置界面」一条，用例见验证记录里的 10c 段。
+14. **转换器分支按 `Path(tool).name` 精确比较 → Windows 上把 `ps2pdf` 当成 macOS `convert`**（2026-09-17 实测发现）——
+   `shutil.which("ps2pdf")` 在 Windows 上返回 `C:\...\MiKTeX\...\ps2pdf.EXE`，`Path(tool).name` 是
+   `ps2pdf.EXE`（**大写扩展名**），`== "ps2pdf"` 不成立 → 落进最后那条 `else: # macOS convert` 分支，
+   命令行变成 `ps2pdf <输入> -o <输出>`；ps2pdf 把 `-o` 当**输出文件名**，于是**运行时的当前目录**里
+   多出一个叫 `-o` 的 PDF 文件、真正的输出没生成 → 转换报告「没有生成文件（可能只是个包装器）」。
+   **之前的「本机 ps2pdf 是包装器、啥也不产出」是误判**（真正的 ps2pdf 是好的）。修法：分支判定改用
+   `Path(tool).stem.lower()`（`gs` / `ps2pdf` / `cupsfilter` / 其余 = macOS 的 `convert`），日志与错误文本也用这个短名字。
+   本机现在 PS→PDF 实测**能转成功**（2367B 的 `%PDF`）；用例在 section 5 加了两条：
+   「换个当前目录结果一致（分支判定没串）」+「当前目录不会多出 `-o` 文件」。
+   **教训**：凡是用 `shutil.which` 拿到的可执行文件做判断，一律取 `stem.lower()` —— Windows 带 `.EXE` 且大小写不定。
+15. **转换成功之后拿旧路径去提交 → `FileNotFoundError`**（2026-09-17，跟着第 14 条一起露出来的）——
+   `Pipeline.process()` 里 `pdf = to_pdf(path, _work)`，转换成功后先把产物 `shutil.move` 成
+   `inbox/<名字>.pdf`（免得原件被反复提交），接着提交时却还在用 `submit_job(pdf, …)` —— 那个文件**已经被移走**了，
+   于是 `FileNotFoundError: inbox/_work/job-….pdf`。走 `run_forever` 时它被「单轮异常不能让守护退出」兜住，
+   表现为「日志里每轮一条异常、任务反复没有提交」（下一轮那 `.pdf` 已经在 inbox 里、能自愈，所以很难发现）；
+   用例里直接暴露成崩溃。修法：提交用 `path`（转换成功后它就是那个 PDF；move 失败时 `path = pdf` 也成立）。
+   **为什么以前没发现**：本机 `ps2pdf` 分支判定坏掉（第 14 条）→ 转换永远失败 → 这条成功路径从没跑到；
+   macOS/Linux 上装 Ghostscript 的用户才会撞上。
+16. **SPA 兜底用 `startswith("/api")` → 前端路由 `/api-docs` 被当成接口，回一坨 JSON 404**（2026-09-17，UI 用例逮到）——
+   404 兜底原来写 `not request.url.path.startswith("/api")` 才回 index.html；`"/api-docs".startswith("/api")`
+   是 **True**（前缀没带边界），于是新加的「API 文档」页整个打不开 —— 直接访问 `/api-docs` 得到
+   `{"detail":"Not Found"}`，而侧栏点进去也一样。修法：判断改成带边界的
+   `path == "/api" or path.startswith("/api/")` ✓（真实接口全是 `/api/...`，未知接口照样回 JSON 404）。
+   **教训**：前端路由**不要以 `/api` 开头**；`/apidocs` 这种也不行（`startswith("/api")` 同样命中）——
+   现在这条边界判断兜住了，但新加路由时仍然避开这个前缀最省事。
+   **同一个坑的第二处（同一天发现）**：`frontend/vite.config.ts` 的 dev 代理键也写的是 `'/api'` 前缀 ✗
+   于是 dev 下 `/apidocs` 被代理去 **8301**、拿到后端托管的那份**构建产物**（HTML 里是 `/assets/index-*.js`
+   → dev 下 404 → 白屏）。修法：代理键改成带边界的正则 `'^/api/'`（Vite 支持 `^` 开头的正则键）。
+   **排查提示**：dev 下白屏、而返回的 HTML 里出现 `/assets/` 哈希文件名 = 请求被代理到后端了。
 
 ## 目录规划
 
 ```
 frontend/          React 18 + Vite + TS；dev 3010，/api 代理到 127.0.0.1:8301；构建产物 dist/（由后端托管）
-  src/pages/       LoginPage / SubmitPage / MyJobsPage / ProfilePage（我的配置）/ QueuePage（任务队列，管理员）/ AdminPage（管理设置）/ AnticraftCallbackPage（各带同名 .css 已删除，全部 Tailwind）
+  src/pages/       LoginPage / SubmitPage / MyJobsPage / ProfilePage（我的配置）/ QueuePage（任务队列，管理员）/ AdminPage（管理设置）/ ApiDocsPage（API 文档，管理员可编辑）/ VprinterPage（虚拟打印机下载 + 说明）/ AnticraftCallbackPage（各带同名 .css 已删除，全部 Tailwind）
   src/components/  Modal / DropZone / FileChips / TextField / ThemeToggle / Icons
   src/api.ts       所有请求的唯一出口（401 统一处理）；src/types/api.ts 接口类型
 backend/           FastAPI + MySQL；main.py 入口、db.py 存储层、auth.py 认证、agent_api.py 代理接口、config.py、constants.py、convert.py（Office→PDF）
-  data/uploads/<job_id>/   上传文件存储（gitignore）；data/converted/<sha256>.pdf Office 转换缓存（gitignore）；data/avatars/ 用户头像（gitignore）；data/covers/ 任务信息页 PDF（gitignore）；log/server.log 运行日志（gitignore）
+  api_docs.py       「API 文档」页的**出厂默认正文**（Markdown 字符串；线上以 settings.api_docs_md 为准）
+  downloads.py      虚拟打印机安装包清单（只开 windows-x64）+ 按 id 找包 + sha256（含缓存）
+  data/uploads/<job_id>/   上传文件存储（gitignore）；data/converted/<sha256>.pdf Office 转换缓存（gitignore）；data/avatars/ 用户头像（gitignore）；data/covers/ 任务信息页 PDF（gitignore）；data/downloads/ 给用户下载的安装包（gitignore，部署时由 pack.sh 单独上传）；log/server.log 运行日志（gitignore）
   db_config.json / db_config.example.json   DB 凭据（前者 gitignore）
 agent/             Windows 打印代理（Python + requests，常驻）
   print_agent.py   轮询/领取/打印/回报；config.json 本机配置（gitignore，模板 config.example.json）
@@ -107,6 +190,15 @@ vprinter/          虚拟打印机（用户端投稿客户端：打印 = 转 PDF
   start / check / stop-vprinter.bat   一键启动 / 自检 / 停止（优先用同目录的 exe，否则退回 Python；纯 ASCII + CRLF）
   README.txt      给使用者看的中文说明（exe 用法、装队列、填配置、常见问题）；运行数据都在 ~/.antiprint-vprinter/
 deploy/pack-vprinter.sh   打 Windows 单文件 exe 分发包（PyInstaller）→ dist/AntiPrintVPrinter-<版本>.zip
+miniprogram/       kbone 微信小程序（**独立工程，其它端源码不动**；用户端提交打印用，不做管理端）
+  webpack.config.js  入口（app + 5 页面）与 kbone 插件配置；@shared 别名 → ../frontend/src（只读复用类型与常量）
+  src/index.js       小程序 app 入口（恢复登录态 + 引入全局样式）；src/page.ts 各页面的 createApp（挂 React、登录兜底、下拉刷新）
+  src/api.ts         wx.request / wx.uploadFile / wx.downloadFile 的唯一出口；src/util.ts 格式化/徽章/进度步骤；src/app.css 全局样式
+  src/components.tsx PageHeader（品牌色带）/ Card / Row / Btn / Segmented / ChipRow / Stepper / Badge / Steps（四步进度）/ Field / Alert
+  src/pages/         login（登录/注册）/ submit（选文件+份数纸张+配送，底部固定提交条）/ jobs（我的任务，含进度步骤）/ balance / profile
+  tabbar/            tabBar 图标（scripts/make_tab_icons.py 生成，81×81，未选中灰/选中青绿）
+  scripts/copy-runtime.js  构建后处理：kbone 运行时 → miniprogram_npm、logo → images/、样式内联进 app.wxss（见下）
+  dist/             构建产物（gitignore）：**dist/ 本身就是小程序项目根**，开发者工具导入 miniprogram/dist/（不写 miniprogramRoot）
 dist/              打包产物（gitignore）：AntiPrintAgent-<版本>.zip 与 .cache/（Python embeddable 下载缓存）
 setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（bat 必须纯 ASCII + CRLF）
 ```
@@ -121,6 +213,8 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
 - 一键：`setup.bat`（建 venv + 装依赖 + `npm.cmd install` + 构建前端）/ `run.bat`（无窗口起后端 + 代理）/ `stop.bat`（调 `stop.ps1`，按端口与路径精确停本项目进程，**不碰 index/antiClass**）
 - 打印代理分发包：`bash deploy/pack-agent.sh` → `dist/AntiPrintAgent-<版本>.zip`（自带 Python 运行环境，发给别人装代理用）
 - 虚拟打印机 exe 分发包：`bash deploy/pack-vprinter.sh` → `dist/AntiPrintVPrinter-<版本>.zip`（单文件 exe，对方不用装 Python；加 `--skip-build` 只用上次的 exe 重新组包）
+- 微信小程序（见「微信小程序（kbone）」一节）：`cd miniprogram && npm.cmd install`（首次）→ `npm.cmd run build`（webpack + 构建后处理）/ `npm.cmd run typecheck`（tsc strict）；用例 `node .tmp-test/miniprogram_test.cjs`（在仓库根跑，48 项）；预览截图 `node .tmp-test/miniprogram_preview.mjs`
+- 小程序分发包：`bash deploy/pack-miniprogram.sh` → `dist/AntiPrintMiniProgram-<版本>.zip`（别人只要微信开发者工具，不需要 Node/Python；`--skip-build` 只用现有产物重打包）
 - 代理：`--selftest`（自检）/ `--printers`（列打印机）/ `--once`（只跑一轮，调试用）/ `--dry-run`（只打命令行不出纸）
 - 虚拟打印机（见「虚拟打印机」一节）：`vprinter\start-vprinter.bat`（无窗口起托盘）/ `check-vprinter.bat`（自检+状态）/ `stop-vprinter.bat`；
   Python 侧 `--selftest` / `--status` / `--once` / `--simulate <文件>`（把文件当打印输出走整条链路）/ `--retry-failed` / `--no-tray`；
@@ -159,23 +253,44 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
 
 ## 虚拟打印机（用户端投稿客户端，2026-09-15 新增）
 
-`vprinter/` —— 给**用户**用的程序：在任意程序里 Ctrl+P 选「ANTIPRINT」这台**虚拟打印机**，
+`vprinter/` —— 给**用户**用的程序：在任意程序里 Ctrl+P 选「AntiPrint-<版本>」这台**虚拟打印机**，
 打印内容自动变成 PDF 并**提交到本站**（等价于在网页上传文件），之后照常走「待审核 → 管理员同意 → 打印代理出纸」。
 它不碰实体打印机，也不需要拿到 `agent_token`；提交人就是配置里填的那个账号（照常计费）。使用者文档见 `vprinter/README.txt`。
 
 - **三个平台都是「系统打印队列 → 落盘 → 守护进程提交」这条链路**：
   - **Windows**：`install/install-printer-windows.ps1`（**必须提权**；`-DryRun` 不提权也能跑，只探测不改动）建队列，
-    驱动用系统自带的 `Microsoft Print To PDF`，端口是**一个固定文件路径**（默认 `C:\ProgramData\AntiPrint\spool\ANTIPRINT.pdf`）——
+    驱动用系统自带的 `Microsoft Print To PDF`，端口是**一个固定文件路径**——**就在程序旁边的数据目录里**：
+    `<数据目录>\spool\<队列名>.pdf`（如 `…\AntiPrintVPrinter-data\spool\AntiPrint-1.0.0.pdf`；
+    老版本放 `%ProgramData%\AntiPrint\spool`，装新队列时由 `legacy_cleanup()` 清掉老端口/残留文件）——
     驱动会把 PDF 直接写进这个文件、**不弹保存对话框**；脚本同时给落盘目录 `Users:Modify`（spooler 以 SYSTEM 身份写，
     托盘程序以当前用户身份读）。
-  - **macOS / Linux**：`sudo bash install/setup-cups.sh` 装 CUPS 后端 `antiprint` + `lpadmin -p ANTIPRINT -v antiprint:/ -m raw`
+  - **macOS / Linux**：`sudo bash install/setup-cups.sh` 装 CUPS 后端 `antiprint` + `lpadmin -p AntiPrint-<版本> -v antiprint:/ -m raw`
+   （脚本自己 `import vp_config` 读版本号，和程序里的默认名永远一致）
     （`-m raw` 不被本地 CUPS 接受时回落 `install/antiprint.ppd`）。后端把打印数据 + 一份 `title/user/copies` 边车
     **原子地**（先写 `.part` 再 `mv`）落进 `/var/spool/antiprint`（**0777**：后端以 root/lp 写、桌面用户要能移走；
    `ANTIPRINT_SPOOL` 环境变量可改）。后端脚本能单独测：`ANTIPRINT_SPOOL=/tmp/x sh install/cups-backend-antiprint 1 "$USER" "文档名" 1 "" 文件`。
 - **守护进程**（`virtual_printer.py`）：pystray 托盘图标（**Windows 右下角**，Win11 默认收进「显示隐藏的图标」溢出区；
   图标是程序画的 64×64：青绿=正常 / 砖红=最近一次提交失败）+ tkinter 配置界面 + 监听线程；单实例锁
   `~/.antiprint-vprinter/vprinter.lock`（第二个进程按退出码 1 拒绝启动）。**配置界面另起一个进程**（`--settings`，
-  托盘菜单调用），这样 macOS 上 AppKit 与 tkinter 不抢主线程、关窗口也不影响守护；配置按 mtime **热更新**。
+  托盘菜单与首次引导共用 `vp_platform.spawn_settings_window()`），这样 macOS 上 AppKit 与 tkinter 不抢主线程、
+  关窗口也不影响守护；配置按 mtime **热更新**。退出语义（2026-09-17 定）：**点配置界面窗口的 × 会先问一句**
+  ——「只关界面」/「退出程序」，可勾「记住我的选择」；记住后写 `config.close_action`（`ask` 出厂默认 / `window` /
+  `quit`，非法值在 `load_config()` 里兜回 `ask`），也能在「运行状态」页的单选里改回来（改完立刻落盘）。
+  选「退出程序」走 `vp_platform.stop_daemon()`：按**命令行里没有 `--settings`** 匹配守护进程（配置界面与它带的
+  父/子进程都有 `--settings`；`--install-printer` / `--uninstall-printer` 这类交互式参数也排除），连子进程一起停。
+  **匹配一律先按「本程序这一形态」收窄**（`_self_form_match()`：exe 形态 = `AntiPrintVPrinter.exe`，
+  源码形态 = `python*` 跑 `virtual_printer.py`）—— 2026-09-17 踩过：源码里跑用例的「退出程序」把用户正在跑的
+  分发包实例一起停了 ✗。所以 `close_settings_windows()` 与 `stop_daemon()` 都只动**同形态**的进程（规则每次现算，
+  用例验另一种形态时把 `vp_platform.IS_FROZEN` 翻一下即可，`.tmp-test/settings_close_helper.py` 加 `--frozen` 就是这么冒充 exe 形态的）。
+  **托盘「退出」= 关配置界面窗口 + 停守护 + 摘图标**（`close_settings_windows()`，按 `--settings` 精确匹配）；
+  命令行里想一把清干净就用 `stop-vprinter.bat`。
+- **手动打开软件就把配置界面亮出来**（2026-09-17 用户要求）：`wants_settings_window(silent, has_tray)` ——
+  有托盘 + 不是 `--silent` + 没设 `ANTIPRINT_VPRINTER_NO_GUI` 就开一次（`first_run_guide()` 开过就不重复开，
+  它现在返回 bool）。双击 exe / 桌面快捷方式 / `start-vprinter.bat` 都算「手动」；**开机自启（`--silent`）与自动化不弹**。
+- **托盘菜单里的勾选状态现读磁盘**（`vp_tray._fresh_cfg()`，2026-09-17 用户反馈「配置界面改了，托盘还显示改之前的」）：
+  `checked=` 回调原来读内存里那份 `pipeline.cfg`，要等 2 秒一轮的热更新线程；配置界面是**另一个进程**、
+  改完直接写盘，菜单上就会先显示旧值。现在这几个 `checked` 一律 `load_config()`（只在弹出菜单时读，开销可忽略）。
+  **细节**：pystray 的 `MenuItem.checked` 是**属性**（读的时候就求值），用例里别写成 `item.checked(item)`（那是 bool，会 TypeError）。
   运行数据全在 `~/.antiprint-vprinter/`：`config.json`(0600) / `inbox/` / `sent/` / `failed/` / `log/vprinter.log` /
   `recent.json`（界面显示最近 10 次） / `spool_state.json`（已消费的落盘文件指纹）。环境变量
   `ANTIPRINT_VPRINTER_HOME`、`ANTIPRINT_VPRINTER_SPOOL`、`ANTIPRINT_VPRINTER_CUPS_SPOOL` 可整体改路径（测试用）。
@@ -189,31 +304,159 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
   上传文件名优先取打印任务名（Windows 用 `Get-PrintJob` 的 DocumentName，取不到再读 PDF 的 `/Title`；CUPS 直接用边车的 title，
   `.docx` 之类会被换成 `.pdf`），都拿不到才退化成 `虚拟打印-<时间戳>.pdf`。
 - **转换器链**（只对 CUPS 的 raw 队列有意义）：`%PDF` 直接用；否则依次试 `gs` → `ps2pdf` → `cupsfilter` → macOS 的
-  `convert`，**每个候选都验产物**（有 Windows 上的 `ps2pdf` 只是包装器、退出码 0 却什么都不产出——踩过），
+  `convert`，**每个候选都验产物**；分支判定用**去掉扩展名的小写名字**（`Path(tool).stem.lower()`）——
+  Windows 上 `which` 回来的是 `ps2pdf.EXE`，按 `name` 比会把它当成最后那条 macOS convert 分支（详见「真 bug」第 14 条）。
   全失败就明确提示装 Ghostscript + 写清失败原因（没生成文件 / 输出不是 PDF / 退出码）。Windows 侧输出本来就是 PDF，用不到。
 - **已知限制（写进 README.txt 了）**：① Windows 的端口是**一个固定文件**，两份任务同时排队会互相覆盖 —— 等托盘提示
   「已提交」再打下一份；② macOS 的 CUPS 后端目录要 cupsd 的 ServerBin 认（`lpinfo -v | grep antiprint` 可验，
   `setup-cups.sh` 会提示）；③ 账号密码明文存在本机 `config.json`（0600），介意就别勾「记住」。
+- **数据全部在程序旁边**（2026-09-16 用户明确要求，含落盘文件与实例锁）：
+  - **数据就地存放**：`vp_config._portable_dir()` 在 exe 旁边建 `AntiPrintVPrinter-data\`
+    （config.json / log / inbox / sent / failed / **spool\**（驱动落 PDF 的地方）/ cache / vprinter.lock），
+    拷走文件夹 = 拷走配置；exe 旁边写不了（受保护目录）就自动回落 `%USERPROFILE%\.antiprint-vprinter`。
+    **只在打包成 exe 时启用**（源码运行仍写用户目录，免得往仓库里塞东西）；`--status` 的「数据模式/数据目录」能看出当前用哪个。
+  - **单实例锁就在数据目录里**（`<数据目录>\vprinter.lock`，2026-09-16 按用户要求「程序产生的东西全放 exe 旁边」改）：
+    早先放 `%LOCALAPPDATA%` 是为了防「两份副本同时盯同一个落盘文件、重复提交」，**现在这个前提没有了** ——
+    落盘文件也跟着副本走（`<数据目录>\spool\<队列名>.pdf`），每份副本只盯自己那份。跨副本的错配改由
+    **`spool_mismatch()` 护栏**兜住：队列端口是程序按自己所在目录算出的**绝对路径**，换目录/换机器后端口还指着
+    老地方就报出来（自检红字 + 配置界面提示条 + 托盘状态），提示去点一次「一键安装打印机队列」对齐。
+  - **队列由程序自己装**（`vp_printer.py`）：托盘菜单「安装/修复虚拟打印机队列」、配置界面的「一键安装打印机队列」，
+    都是 `elevate_and_wait(["--install-printer"])` —— 用 `ShellExecuteExW(runas)` 提权后再跑一遍自己（UAC 一次），
+    子进程做完弹窗告诉用户结果；`--install-printer` / `--uninstall-printer` 也可以由管理员直接在命令行跑。
+    install/uninstall 都是**幂等**的（已存在就重设驱动/端口 = 修复）；非管理员调用会先被 `is_admin()` 拦下并提示，
+    不会在系统里留下半截改动。**提权必须放后台线程**（UAC 期间不能卡住托盘消息循环 / Tk 主循环）。
+  - **首次使用引导**（`first_run_guide()`）：没配账号、或队列没装且没提示过（`config.queue_warned`），就把配置界面自动打开
+    —— 不然 Win11 把托盘图标收进溢出区，双击 exe 的人会以为啥也没发生。自动化用 `ANTIPRINT_VPRINTER_NO_GUI=1` 跳过。
+  - **只有打印队列本身**（那个 `AntiPrint-<版本>` 打印机对象）是系统级的、放不进文件夹（Windows 注册表 + 假脱机服务管着），
+    所以换机器/换目录后要点一次「一键安装打印机队列」把**端口**指到新目录；端口只能是绝对路径，
+    「相对」体现在**路径由程序按自己所在目录算出来**（`spool_file_for()` ← `app_dir()`/数据目录），不写死在 ProgramData。
+- **托盘图标「不见了」的真实原因：pystray 的 `run(setup=回调)` 会顶替 `visible = True`**（2026-09-16，害我
+  查了很久还先怪到 Windows 头上）—— 看 `pystray/_base.py` 的 `setup_handler`：**传了 setup 回调，它就不执行
+  默认那句 `self.visible = True`**，图标于是**永远不会被 NIM_ADD 加进托盘**；而回调里的日志照写不误，
+  看起来像系统把图标弄丢了。修法：`Tray._on_tray_ready()` 里**自己 `icon.visible = True`** 再记日志。
+  **教训：`Shell_NotifyIcon` 的返回值 pystray 压根不看（`_message()` 直接丢弃），所以任何日志行都不能当
+  「系统收下了」的证据** —— 用例里给 `pystray._win32.win32.Shell_NotifyIcon` 打桩，断言 NIM_ADD 真的发出
+  且返回真（`.tmp-test/vprinter_test.py` 的 10b2 段；注意 pystray 注册图标要 ~1.9 秒，用例别停太早）。
+  另外：本机虚拟屏是 3627×1081（多显示器），拿「截屏右下角找图标」验证会**扫错显示器** —— 别用这个办法。
+  恢复入口：图标没了托盘菜单就点不到，因此恢复入口必须在别处：
+  配置界面「运行状态」页的 **「重启后台服务」**（`stop_other_instances()` + 起一个新进程，图标随之重新注册）
+  和托盘菜单里的同名项。配置界面**双击 exe 就能打开**，所以这条路一定走得通。
+  判断「图标到底在不在」用 `.tmp-test/tray_flyout_check.ps1`（点开溢出层逐个列文件名，注意 Win11 那个
+  「显示隐藏的图标」按钮有时不支持 Invoke，脚本里做了多模式回退 + 鼠标兜底）。
+- **免装 Python（2026-09-16 按用户要求补）**：
+  * Windows 侧本来就是 PyInstaller 单文件包（Python + requests/pystray/Pillow/tkinter 全在里面）；
+    **实证**：把 `PATH` 缩成 `C:\Windows\system32;C:\Windows`、`PYTHONHOME`/`PYTHONPATH` 指向不存在的目录，
+    `AntiPrintVPrinter.exe --status` 照样 2.1 秒跑出 JSON（用例在 `.tmp-test/vprinter_exe_test.py` 的 1b 段）。
+  * **macOS / Linux 也能免 Python**：`deploy/pack-vprinter.sh` 改成跨平台（解释器按
+    「Windows venv → POSIX venv → python3」找；`.ico`/版本信息只 Windows 生成；`--add-data` 的分隔符按平台取；
+    产物名在非 Windows 上加 `-macos`/`-linux` 后缀）。**跨平台二进制得在对应平台上构建**（PyInstaller 不能交叉编译）。
+  * 分发包里补了 `start-vprinter.sh` / `check-vprinter.sh`（优先跑同目录可执行文件，没有才退回 `python3`）
+    与 `快速开始.txt`（三步说明，给不看长文档的人）。
+  * `setup-cups.sh` / `uninstall-cups.sh` 取版本号时**先试 python3，没有再问同目录的可执行文件**
+    （`AntiPrintVPrinter --status` 里抠 `"version"`）—— 免 Python 的机器上队列名才不会退化成不带版本号的 `AntiPrint`。
+- **可选的桌面快捷方式**：`vp_platform.create_desktop_shortcut()` / `shortcut_exists()` / `shortcut_path()`，
+  入口：配置界面「运行状态」页按钮、托盘菜单、`--create-shortcut`，以及**首次启动时问一次**
+  （仅 exe 形态、还没有快捷方式、`config.shortcut_asked` 未置位时问，问过就记住不再问）。
+  * Windows 用 PowerShell 建 `.lnk`（目标 = `launch_argv()`，图标 = exe 自带图标或现场生成的 `.ico`；
+    **冻结形态最怕把目标写成 python**，用例会读回 `.lnk` 断言目标就是 exe）；
+  * macOS 写 `.command`、Linux 写 `.desktop`；
+  * **桌面目录必须认注册表**（`...\Explorer\User Shell Folders\Desktop`）—— 本机桌面被重定向到 `D:\imgC\desktop`，
+    写 `%USERPROFILE%\Desktop` 会落到另一个（Explorer 不显示的）目录；测试用
+    `ANTIPRINT_VPRINTER_DESKTOP` 指到临时目录，不动用户真实桌面。
+- **启动速度：别在启动路径上起 PowerShell**（2026-09-16，用户反馈「打开软件好慢」）—— `queue_exists()` /
+  `queue_detail()` 原来都走 `powershell Get-Printer`，而 Windows PowerShell 5.1 **每次启动就要 1.5~2.5 秒**；
+  配置界面初始化要问两次（队列在不在 + 驱动/端口），守护进程启动前再问一次，于是打开窗口要 5.5~6 秒、
+  `--status` 4.66 秒里 4 秒全耗在这。现在改成**读注册表**（`HKLM\SYSTEM\CurrentControlSet\Control\Print\Printers\<队列>`，
+  值 `Name`/`Port` 就够用，5 个队列共 0.001 秒）+ **5 秒缓存**（一次启动里同一份数据会被问好几次）；
+  刚装/卸完队列的调用方传 `windows_printers(refresh=True)`（GUI 的「刷新状态」就是这么做的）。
+  实测：配置界面出现 **5.5~6 秒 → 1.74 秒**，`--status` **4.66 → 2.24 秒**，`--selftest` **5.5 → 2.52 秒**。
+  剩下的开销是 PyInstaller 单文件每次解包（约 1.4 秒）+ 进程启动；**要更快就换 onedir**：
+  `--status` 实测 3.79 →（同样是注册表版）约 0.8 秒级别，代价是从「一个 exe」变成「一个文件夹」（exe + `_internal\`）。
+  注册表里**没有驱动名**（`DsDriver` 子键存的是能力参数，不是驱动名），所以 `queue_detail()` 现在只报端口；
+  真要驱动名的地方（装机脚本输出、`windows_job_name`）继续用 PowerShell —— 它们不在启动路径上。
+- **双击 exe = 打开配置界面**（`handle_already_running()`，2026-09-16 按用户反馈改）：以前锁被占时一律弹
+  「已经在运行，要不要接管」，用户每次双击都点「是」→ 把自己刚起的那份杀掉重启 → 又看到同一个窗口，像卡死一样。
+  现在分三种情况：① 有控制台 / `--silent`（命令行、自动化、开机自启）→ 只打印一句、不弹窗；
+  ② **同一份程序又点了一次**（`other_instances()` 里的可执行文件路径 == 自己，即双击桌面图标）→ 直接把配置界面
+  开出来（`open_settings_window()`），**不弹窗、不杀进程**；③ **另一份副本在跑**（路径不同，升级场景）→ 才弹窗问要不要接管。
+  配套：`autostart_command()` 末尾带 `--silent`（开机自启不主动弹界面）；`other_instances()` 用 CIM 取
+  `ProcessId + ExecutablePath`，并**排除自己与自己的父进程**（单文件 exe 父子同名）。
+- **队列名 = 驼峰品牌名 + 版本号**（`AntiPrint-1.0.0`，2026-09-16 按用户要求改）：`vp_config.DEFAULT_PRINTER_NAME =
+  f"{DEFAULT_PRINTER_BASE}-{VERSION}"`，换版本号名字自动跟着变，打印对话框里一眼看出装的是哪一版。要点：
+  ① **用连字符不用空格**（CUPS 的队列名不允许空格，Windows 侧跟着统一）；
+  ② **落盘文件名跟着队列名走**（`spool_file_for(name)`，监听目标 `watch_targets(cfg)` 也按 `cfg.printer_name` 推导）——
+     否则新队列入库写 `AntiPrint-1.0.0.pdf`、守护进程还盯着老的 `ANTIPRINT.pdf`，打印看起来「没反应」；
+  ③ **老名字要迁移 + 清理**：`load_config()` 把配置里存的 `ANTIPRINT` 自动升成新默认名（用户自定义的名字不动），
+     `vp_printer.install()` 建完新队列后调 `legacy_cleanup()` 把 `LEGACY_PRINTER_NAMES` 里的老队列连同它的端口/文件清掉
+     （只碰我们自己的名字）；
+  ④ 分发包里的 `install-printer-windows.ps1` 默认名由**打包脚本**把版本号替换进去（仓库里那份保持不带版本的 `AntiPrint`，
+     直接跑也能用），替换数量在打包时会断言（必须是 2 个 ps1）。
+- **图标 = 网站 logo（2026-09-16）**：托盘图标、窗口图标、exe 图标全部用网站那一份
+  `frontend/public/apple-touch-icon.png`（品牌绿圆角方块 + lucide Printer 白色描边，由 `frontend/scripts/make_favicon.py` 生成）。
+  `vp_tray.load_logo(size, state)` 按「exe 包内 `assets/antiprint-logo.png` → 程序目录 → 仓库 `../frontend/public/`」找图并缩放，
+  失败态只是把徽标色换成砖红（`_recolor_badge`，白色图标与透明背景保留）；都拿不到才退回 `make_image()` 画的兜底图标。
+  `deploy/pack-vprinter.sh` 组包时把网站 logo 复制进 `assets/` 并用 `--add-data` 塞进 exe（**不要**改成手绘近似图标，用户看得出不一样）。
+- **提交后弹窗提示**（`settings.notify_popup` 的对等物，存本地 `config.notify_popup`，**默认 False = 不弹**）：
+  `Tray.notify()` 始终更新图标颜色与悬停文字（鼠标划过去就能看到结果），只有勾了这个开关才 `icon.notify()` 弹气泡。
+  配置界面右下角、托盘菜单里各有一个开关，改完即时生效（托盘菜单走 `_toggle_notify()` → 写配置 + `pipeline.update_config()`）。
+- **默认服务器 = `https://print.anticraft.top`**（`vp_config.DEFAULT_SERVER`，2026-09-16 起）：新装的用户不用手填地址，
+  只要在配置界面填账号密码即可；`config.example.json` 同步。
+- **界面截图验收**（比读代码靠谱，2026-09-17 用它逮到「运行状态页被裁」）：
+  `powershell -ExecutionPolicy Bypass -File .tmp-test/capture_close_prompt.ps1 -Source`（源码形态，改完界面立刻能看，
+  不用等打包；去掉 `-Source` 则用分发包里的 exe）。脚本会塞一份「有账号 + 队列名不存在」的临时配置，让窗口
+  **直接停在「运行状态」页**，截一张，再发 `WM_CLOSE` 截「× 弹窗」，图落在 `.tmp-test/shots/`
+  （`vprinter-settings.png` / `vprinter-close-prompt.png`）。
+  **两个坑**：① PowerShell 5.1 的 `Set-Content -Encoding UTF8` **带 BOM**，`json.loads` 读到 BOM 会失败并静默
+  退回默认配置（表现为「账号明明填了却显示空」）—— 脚本里用 .NET `UTF8Encoding($false)` 覆写；② **UIA 读不到 Tk 控件**
+  （Tk 没有 UIA provider），别指望用 UIA 验 Tk 界面，规规矩矩截图。
+- **配置界面**（`vp_gui.py`，2026-09-16 重做）：白底 logo 标题条（网站 logo + 版本 + 平台）+ **一排二级菜单**
+  （网站账号 / 提交选项 / 运行状态，选中那个是品牌绿底）+ **底部固定操作条**（保存并应用、打开数据目录、
+  开机自动启动、提交后弹窗提示）。窗口默认 780×600（`min(600, 屏幕高*0.78)`；分栏前是 770 高，用户要求压短）。
+  **底部两个勾选框「勾了即存」**（2026-09-17 用户要求）：`_toggle_autostart()` / `_toggle_notify()` 立刻
+  `save_config()` 并给提示 —— 它们读的是配置文件、托盘菜单也读配置文件，不点「保存并应用」也该生效；
+  「保存并应用」只管那些输入框（服务器/账号/份数/备注/配送）。
+  **点 × 问一句**（2026-09-17 加，见上「退出语义」）：`root.protocol("WM_DELETE_WINDOW", self._on_close)` →
+  `ClosePrompt` 小弹窗（只关界面 / 退出程序 / 取消 + 勾「记住我的选择」）+「运行状态」页的单选
+  （`self.var_close` / `self.close_radios`，改完立刻 `save_config`）。
+  `_on_close()` 的逻辑单独可测：取消 → 什么都不做；`window` → 只 `destroy()`；`quit` → `stop_daemon()` 再 `destroy()`；
+  `ask` → 弹窗 + 勾了就写配置。**用例替身要真 Toplevel**（`_on_close` 里 `wait_window(prompt)` 需要真窗口，
+  桩对象会 TclError）。
+  **「运行状态」页可滚动**（`_page("运行状态", scroll=True)`，2026-09-17 截图验收发现加的）：那页东西会越加越多
+  （队列/守护/数据目录/收件目录 + × 的行为 + 最近提交），窗口矮或顶部出现提示条时**会从底部开始裁**
+  —— 实测「最近提交」整块被挤出页面区、单选行被裁一半（截图在 `.tmp-test/shots/`）。现在内容放在
+  Canvas 里 + 右侧滚动条（`window._scroll_canvas`），鼠标滚轮可用；账号/提交两页不动，保持原布局。
+  结构：`outer` 用 grid 分 5 行 —— 0 标题条 / 1 二级菜单 / 2 提示条（缺账号缺队列时才出现）/ 3 页面区（权重 1）/ 4 底部操作条；
+  三个子界面**叠在页面区的同一格里**靠 `tkraise()` 切换，`_show_tab()` 只管换按钮样式 + 抬页。
+  踩过的点：① 同一个容器里别混用 `pack`/`grid`（直接 TclError；`pack` 还会按创建顺序分配空间，先 pack 的会吃光高度、
+  把底部操作条挤没）；② 初始尺寸按 `winfo_screenheight()` 自适应（固定值在 800px 高的远程桌面上会把关键按钮顶到屏幕外）；
+  ③ 按钮配色靠 `ttk.Style().theme_use("clam")` 才生效；④ **用例里判断窗口布局别去猜行号**（原来按 `grid_info()["row"] == 2`
+  找底部操作条，改成 5 行后取到的是提示条 → `IndexError` 让整段界面用例被 `except` 静默跳过、连带后面的 `--simulate`
+  因为配置没保存而失败；现在用例直接用界面暴露的 `window.footer` / `window.footer_row`）。
 - 命令行：`--settings` / `--selftest`（配置·登录·收件目录·队列·自启动·托盘逐项给结论，关键项失败退出码 1）/
-  `--status`（JSON）/ `--once` / `--simulate 文件`（把文件当「刚从打印机出来的」走完整链路）/ `--retry-failed` /
-  `--no-tray` / `--init-config`；Windows 上还有 `start-vprinter.bat` / `check-vprinter.bat` / `stop-vprinter.bat`
-  （`stop-vprinter.bat` 用 CIM 匹配 `virtual_printer` 的 pythonw 进程，不碰打印代理）。
+  `--status`（JSON，含数据模式/实例锁路径）/ `--once` / `--simulate 文件`（把文件当「刚从打印机出来的」走完整链路）/
+  `--retry-failed` / `--install-printer`（建/修复队列，要管理员）/ `--uninstall-printer` / `--no-tray` / `--init-config`；
+  Windows 上还有 `start-vprinter.bat` / `check-vprinter.bat` / `stop-vprinter.bat`
+  （`stop-vprinter.bat` 用 CIM 匹配 `virtual_printer` 的 pythonw 进程与 `AntiPrintVPrinter.exe`，不碰打印代理）。
 - **依赖**：`requests` + `pystray` + `Pillow`（tkinter 是标准库；Linux 可能还要 `python3-tk`）。本机验收时是装进
   `backend\.venv` 的（`pip install -i https://mirrors.aliyun.com/pypi/simple/ pystray Pillow`）。没有图形环境就用 `--no-tray`。
 - 与现有脚本的关系：`stop.ps1`（= `stop.bat`）按「可执行文件路径含 AntiPrint」杀进程，**会顺带把虚拟打印机一起停掉**；
   `run.bat`/`setup.bat` 不管它（它是给用户用的桌面程序，不是服务的一部分）。Windows 上它自带 `install/`、
   不需要 `agent/` 的任何东西，也不需要 `agent_token`。
 
-### 打成 Windows exe（单文件，给不装 Python 的用户）
+### 打成 Windows exe（单文件绿色版，给不装 Python 的用户）
 
 `bash deploy/pack-vprinter.sh` → `dist/AntiPrintVPrinter-<版本>.zip`（exe 23MB + `install/` + README + 三个 bat）
-→ 实跑全部 31 项 exe 用例通过（见验证记录）。构建细节与坑：
+→ 实跑全部 40 项 exe 用例通过（见验证记录）。解压后双击 exe 即用（队列由程序引导安装，见上一节的「绿色版」）。
+构建细节与坑：
 
 - **PyInstaller**（`--onefile --windowed`，构建时才 pip 装，不进分发包）：`--icon` 与 `--version-file` 都由打包脚本
   **现场生成**（图标复用 `vp_tray.make_image(BRAND, 256)` 存成多档 .ico；版本信息用 `vp_config.VERSION`）。
   **`--icon`/`--version-file` 必须传绝对路径** —— PyInstaller 会相对 `--specpath` 再解析一层，相对路径会变成
   `dist/.vprinter-build\dist/.vprinter-build/version-info.txt` 这种鬼路径（踩过）。构建产物在 `dist/.vprinter-build/`（gitignore）。
   **单文件冷启动实测 5~7 秒**（每次都要解包到临时目录），托盘常驻后无此开销；`--skip-build` 可只重新组包。
+- **打包脚本里跑 exe 自检要给它临时 HOME**：绿色版 exe 会在**自己旁边**建 `AntiPrintVPrinter-data/`，
+  直接跑 `$STAGE/AntiPrintVPrinter.exe --selftest` 会把数据目录写进分发包（下一次 `--skip-build` 就把它打进去了）。
+  脚本现在给自检设 `ANTIPRINT_VPRINTER_HOME` 到构建目录，并在组包后 `rm -rf` 一遍 + 校验里加了这一项。
 - **冻结后三处路径必须走 `vp_platform`**：`IS_FROZEN` / `app_dir()`（= exe 所在目录，自检里提示 install 脚本位置用它）/
   `launch_argv()`（= `[exe, ...]` 或 `[pythonw, virtual_printer.py, ...]`）。**托盘菜单打开配置界面、三条自启动
   （Run 注册表 / LaunchAgent / .desktop）全部改走 `launch_argv()`/`start_command()`** —— 写死 `python_launcher() + 脚本路径`
@@ -231,6 +474,111 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
   只杀得掉父进程，子进程会活着继续占托盘图标和单实例锁（本机验收时留下过 6 个孤儿进程，溢出层里一堆重复图标）。
   **用户侧**：托盘菜单「退出」，或 `stop-vprinter.bat`（CIM 按进程名 `AntiPrintVPrinter.exe` 把父子一起停，实测剩余 0 个）；
   **脚本侧**：要停 exe 就走 `stop-vprinter.bat`，别自己 terminate（`.tmp-test/vprinter_exe_test.py` 的 `stop_all()` 即此）。
+
+## 微信小程序（kbone，2026-09-16 新增）
+
+`miniprogram/` —— **用户端**小程序：登录 → 选文件 → 填配送 → 提交 → 看任务/余额/配置。
+**独立工程，其它端源码不动**；只在用户侧跑，不参与线上部署（部署仍是 `deploy/pack.sh` 那套）。
+使用者/开发者说明见 `miniprogram/README.md`。范围：**不做管理端**（审核、队列、管理设置仍只在网站上做）。
+
+- **技术选型**：kbone 三件套 `mp-webpack-plugin@1.6.6` + `miniprogram-render@2.2.29` + `miniprogram-element@2.2.23`，
+  **React 固定 17.0.2**（kbone 的事件模拟按 React 17 之前的口径写的，别升 18）；样式是手写 wxss 类名（`src/app.css`），
+  不用 Tailwind（kbone 的 CSS 走 `mini-css-extract-plugin` → 小程序 wxss，Tailwind v4 的 vite 插件在这里用不上）。
+- **`@shared` 别名 → `../frontend/src`（只读）**：`api.ts`/`util.ts` 直接 `import type {...} from '@shared/types/api'`、
+  `import { STATUS_*, PAPER_OPTIONS, describePrintOptions, ROLE_LABEL } from '@shared/constants'`，
+  所以状态字面量、打印选项、计费文案与网站是**同一份**。**唯一不共用的是 `formatTime`** —— web 版用 `toLocaleString`，
+  小程序的 JSCore 不一定有 Intl，小程序里另写了一份手工拼串的（`src/util.ts`）。
+- **入口契约**（kbone 的硬性要求，搞错就是白屏）：
+  - app 入口 `src/index.js`：模块顶层直接 `window.appOptions = {...}`（kbone 的 `app.tmpl.js` 读 `fakeWindow.appOptions` 交给 `App()`）
+    ——**app 入口里的 window 是空对象 `fakeWindow`，碰 `document` 会崩**。
+  - 页面入口：`export default function createApp() { return createPage(window, document, <Page />, ...) }`，
+    配合 webpack `output.library = { name: 'createApp', type: 'window', export: 'default' }`
+    —— 产物被 kbone 包装成 `module.exports = function(window, document) {...}`，页面模板 `init(window, document)` 之后
+    会调用 `window.createApp()`（此时才把我们的 createApp 挂到**页面私有的 window** 上）。
+    **页面入口的顶层代码会在 `init` 被调用时执行**，所以「模块顶层直接 render」也能跑，但**不要写成只导出函数不调用**。
+  - `router` / `pages` 配置的 key 是**页面名**（`login`，不是 `pages/login/index`）——kbone 内部按 `pages/<页面名>/index` 拼小程序路径；
+    `pages[name].defaultTargetUrl` 给每个页面一个 DOM 地址（`/login`、`/jobs`…），`pullDownRefresh` 只给任务列表开。
+- **跳转统一走 `src/page.ts` 的 `go()` / `goLogin()`，别在页面里自己写**：`go('/jobs')` 对 **tabBar 页直接调 `wx.switchTab`**
+  （**不能带 query** —— 走 kbone 的 `location.href` 时它会拼 `?type=jump&targeturl=…`，微信会一直刷
+  「wx.switchTab: url 不支持 queryString」告警，2026-09-16 在开发者工具里实测到）；非 tabBar 页（登录页）才走 `location.href`
+  （kbone 要用 targeturl 才能定位到页面）。`goLogin()` 用 `wx.reLaunch`（清页面栈，tab 页里也能跳）。
+- **401 自动回登录页**：`api.onAuthExpired` 由 `page.ts` 的 `createPage()` 挂上 `goLogin`，任何请求返回 401 → 清令牌 + reLaunch 回登录页
+  （与 web 端 `setOnAuthExpired` 行为一致，不用每个页面自己处理）。
+- **tabBar 页切换不会重建页面**（`switchTab` 只切显示，页面实例与 React state 都留着）：所以**结束态要自己清**。
+  `page.ts` 把 kbone 的 `wxshow` 接到 `util.triggerShow()`，页面用 `onShow(fn)` 注册——提交页就靠它把「提交成功」卡片清掉、
+  切回来回到表单首页（2026-09-16 实测：提交成功 → 看我的任务 → 切回提交页仍停在成功页）。只清成功态、不动正在填写的内容。
+- **每个页面是独立 bundle（没有公共 chunk）**：所以**每页各有一份 `api.ts` 实例**，进页面时必须在 `createPage` 里
+  `api.restoreToken()` 重新读 `wx.getStorageSync`（否则第二页看到的是空令牌、被当成未登录踢回登录页 —— 2026-09-16 踩过）。
+- **登录态存 `wx.getStorageSync`**（token / user / server 三个键）。默认服务器 `http://127.0.0.1:8301`（**故意不默认线上**，
+  免得在开发者工具里点到线上打出真纸），登录页「服务器地址」卡片可改；上线要换 https + 在微信后台加 request/uploadFile/downloadFile 合法域名。
+- **服务器地址固定**：`src/api.ts` 的 `SERVER = 'https://print.anticraft.top'`，界面上**没有**修改入口
+  （用户端不该关心部署位置）。本机联调要改就改这个常量再构建；`urlCheck:false` 只影响开发者工具。
+- **提交按「单文件」**：`wx.uploadFile` 一次只能传一个文件，而后端 `POST /api/jobs` 只支持建单时带文件（**没有追加文件接口**），
+  所以小程序一次提交 = 一个文件，多文件分多次提交。上传前会把选中的文件**复制成原名**再传（`stageFile()`：`wx.uploadFile`
+  用路径末段当文件名，聊天文件的临时名会丢原文件名），传完 `dropStagedFile()` 删掉暂存。
+- **文件来源只有两条，且没有「浏览手机文件系统」的接口**（2026-09-17 逐条核对官方 API 类型定义得到的结论，别再去猜）：
+  全部 `choose*` 接口只有 `chooseAddress / chooseContact / chooseImage / chooseInvoice / chooseInvoiceTitle /
+  chooseLicensePlate / chooseLocation / chooseMedia / chooseMessageFile / choosePoi / chooseVideo`——**没有任何本地文件选择器**；
+  `wx.chooseMessageFile` 的官方描述只有「**从客户端会话选择文件**」；`wx.getFileSystemManager()` 只能读写
+  `wx.env.USER_DATA_PATH`（小程序沙箱），**看不到手机文件**；`<button>` 也没有能选文件的 `open-type`。
+  所以实现是：①「选择文件（聊天记录里选）」= `wx.chooseMessageFile({count:1, type:'all'})`；②「拍照或从相册选图片」= `wx.chooseMedia({mediaType:['image'],
+  sourceType:['album','camera']})`。**手机里的文件要在界面上告诉用户**先发给「文件传输助手」再从聊天记录里选（这句话写在文件卡片下方）。
+  **2026-09-17 用真浏览器渲染官方文档复核过的原文**（WebFetch 读不到 SPA，搜索引擎直连超时；抓下来的正文存在
+  `.tmp-test/shots/wxdocs/*.txt`）：`wx.chooseMessageFile` 的功能描述只有「从客户端会话选择文件。」，`type` 的 `file` = 「**除了图片和视频之外的其它文件**」
+  （所以这里必须用 `type:'all'`，原来写 `'file'` + 含 png/jpg 的 extension 过滤是选不到图片的 bug，已修），`extension` 仅 `type==file` 时有效；
+  「文件系统」能力页原文：本地文件是**以用户维度隔离的小程序沙箱**（临时/缓存/用户文件共 200MB），「本地临时文件只能通过调用特定接口产生，不能直接写入内容」；
+  文件分类里唯一与磁盘有关的是 `wx.saveFileToDisk`（「保存文件系统的文件到用户磁盘，**仅在 PC 端支持**」）——那是**写出**方向。
+  **即：小程序没有任何「读入手机/电脑本地文件」的接口。**
+- **预览入口要做显眼**（用户反馈「找不到」）：选完文件后文件行下面是一整行 `btn-row`「预览文件 / 移除」（不是小灰字），
+  图片还会在文件行里直接给缩略图（`<img mode="aspectFill">`，mode 是微信属性，TS 里靠 `IMG_MODE` 透传）；
+  「我的任务」里每个文件右侧是 `btn-ghost` 的「预览文件」按钮。提交前预览用 `api.openLocalFile()`（本地临时路径）。
+- **界面字号可调（标准/大/特大）**：偏好存 `wx` 本地缓存 `antiprint_scale`，`page.ts` 的 `applyUiScale()` 把
+  `scale-lg` / `scale-xl` 写到 page 的 body 上（kbone 会同步到页面根元素的 class），wxss 里只覆盖几个 CSS 变量
+  （`--fs-hero/--fs-title/--fs-btn/--fs-body/--fs-label/--fs-small/--fs-tiny/--fs-amount`）即可整页缩放；
+  入口在「我的配置 → 界面字号」，改完立即生效（`applyUiScale()`），进任何页面时也会自动套用。
+  **原生 tabBar 与导航栏不跟着变**（那是微信的 UI，改不了），这是已知限制。
+- **打印设置只有「份数 + 页面范围」**（2026-09-16 按用户要求）：纸张**固定 A4**，不给用户选（机型与业务都只支持 A4，
+  提交时仍带 `paper=A4`）；页面范围走 `pages` 表单字段（只允许数字/逗号/短横线，≤64 字，与后端白名单一致，前端先拦一道）。
+  选完文件可以**先预览**再提交：`api.openLocalFile()`（图片 `wx.previewImage`、其余 `wx.openDocument`）。
+- **文件预览**：`wx.downloadFile`（带 `Authorization` 头）→ `wx.openDocument`（PDF/Office，后端已把 Office 转成 PDF）；
+  **图片走 `wx.previewImage`**（openDocument 不支持图片）。头像同理不可用（`<image src>` 带不了请求头），所以小程序不做头像。
+- **构建**：`npm.cmd run build` = `webpack --mode production` + `node scripts/copy-runtime.js`。
+  后者把 `node_modules/miniprogram-{render,element}/dist` 拷进 `dist/miniprogram/miniprogram_npm/`
+  （等价开发者工具的「构建 npm」，**离线可重复**），并清掉插件生成的 `package.json` 与 `node_modules/.miniprogram` 标记，免得工具反复提示「依赖未构建」。
+  产物布局：**`dist/` 本身就是项目根**（`project.config.json` 写在 `dist/` 根上，**不设 `miniprogramRoot`**）：
+  `app.js/app.json/app.wxss/config.js/sitemap.json/project.config.json` + `common/`（webpack 产物，含被 `app.wxss` @import 的 `app.css`）
+  + `pages/` + `miniprogram_npm/`；**开发者工具导入 `miniprogram/dist/`**。`dist/`、`node_modules/` 已被根 `.gitignore` 覆盖。
+- **两条已在开发者工具里实测的硬约束**（2026-09-16，两条都踩过）：
+  ① **抽出来的样式必须叫 `.wxss`**：`new MiniCssExtractPlugin({filename: '[name].wxss'})`。小程序的 `@import` 只认 wxss 扩展名，
+     用 `.css` 时即使 `dist/common/app.css` 真实存在，开发者工具也报 ``[WXSS 文件编译错误] path `common/app.css` not found from `./app.wxss` ``。
+     （`copy-runtime.js` 会顺手清掉历史构建留下的 `common/*.css`。插件侧对 `.css`/`.wxss` 都做了 adjustCss 处理，所以改名是安全的。）
+  ② **项目根 = 代码根**：插件生成的路径都按此假设（根上 `app.wxss` 里 `@import "common/…"`、页面 wxss 里 `@import "../../common/…"`、
+     `sitemap.json`、tabBar 图标目录）。加 `miniprogramRoot` 把代码根往下挪一层，或把项目根设在代码目录的上一层，
+     会报 `[app.json 文件内容错误] app.json: 在项目根目录未找到 app.json`。**判断选对了没有：选中的目录里直接就有 `app.json`。**
+- **样式注意**：kbone 的 `adjust-css` 会改写 wxss 里的选择器（`html`→`page`、标签名→taglist、**含 `~` 的选择器直接丢弃**），
+  所以 `src/app.css` 只用类选择器 + `page`，类名与网站配方一一对应（`card` / `btn-primary` / `badge-amber` / `step` / `hero`…）。
+- **样式不再走 `@import`**：构建后处理会把 `common/app.wxss` 的内容**内联进 `dist/app.wxss`**（并删掉那个文件）。
+  原因：kbone 模板会把 `@import` 追加到 400 多行之后（`app.tmpl.wxss` 有 416 行），位置与解析行为都不可控 —— 实测出过
+  「path `common/app.css` not found from `./app.wxss`」。内联后 app.wxss 是自包含的，样式一定生效，也不再依赖 `/p` 的解析。
+- **界面（2026-09-16 重写）**：导航栏品牌青绿 + 白字（`app.json` window 段）、每页 `navigationBarTitleText`（`pages[name].extra`）；
+  页面顶部有同色「色带」（`PageHeader`：标题/说明/信息胶囊），内容卡片上移 24px 压住色带；任务卡带四步进度
+  （`util.jobSteps()`：已提交→审核→打印→交接，驳回/撤回/失败不显示进度）；提交页按钮固定在 `.bottom-bar`（fixed，自动让开原生 tabBar）；
+  触摸高度 ≥44px。tabBar 图标是自绘的（`scripts/make_tab_icons.py`，纯标准库 PNG），改图标后重跑该脚本再 `npm run build`。
+- **本地预览 + 横向溢出检查（没有开发者工具也能看效果）**：`node .tmp-test/miniprogram_preview.mjs [页面...]` ——
+  用 kbone 运行时把产物渲染成 HTML、套上真实 `dist/app.wxss` 与导航栏/tabBar 外壳，chromium 截图到
+  `.tmp-test/shots/miniprogram/`，并输出每页「右边缘超过 375px 的元素」。两个坑：
+  ① 预览外壳**不要写** `* { box-sizing: border-box }`（wxss 不支持 `*`，写了会掩盖按钮顶出屏幕这类问题）——
+  样式里的 `box-sizing: border-box` 都写在各个类上，凡 `width:100%` + padding 的容器必须手写；
+  ② 预览页面用 `body.h5-body` 覆盖 kbone 的 `.h5-body{display:block}`，否则 flex 外壳失效、tabBar 被顶到屏幕外。
+  （反向验证过：把 `.btn` 退回 `content-box`，检查能报出 383/395px 的溢出。）
+- **给别人用（不需要 Node / Python）**：`bash deploy/pack-miniprogram.sh` → `dist/AntiPrintMiniProgram-<版本>.zip`
+  （构建 + 组装 + 打 zip + 校验：不含 node_modules/*.map/*.log/package.json，含 project.config.json、app.json、
+  pages、miniprogram_npm 运行时、logo 与一份「导入说明.txt」）。收包的人只要微信开发者工具，解压导入即可。
+- **验证**：`node .tmp-test/miniprogram_test.cjs`（在仓库根跑，**44 项**）—— Node 里直接跑 kbone 的 `miniprogram-render`，
+  把 5 个页面的**产物**真的挂起来：断言 React 渲染文本、徽章配色、`location` 兜底，并用 kbone 的冒泡 `CustomEvent` 模拟点击，
+  覆盖「选文件 → 提交（校验 multipart 字段 files/delivery_mode/address/copies/paper）→ 成功卡片」「402 → 余额不足提示」
+  「撤回 → 二次确认 → 调接口」「点文件名 → 下载（带令牌）」。**未实测**：wxss 实际渲染、`miniprogram-element` 的 wxml 投影、
+  真实 `wx.chooseMessageFile`/`openDocument`、合法域名与真机 —— 这些要开发者工具 + 自己的 AppID（现为 `touristappid` 游客模式）。
 
 ## 任务状态机
 
@@ -351,6 +699,11 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
 - **管理设置页（`/admin`）是分栏的**：顶部一排二级菜单按钮（`TABS` 常量：打印设置/打印计费/免费白名单/管理员名单/anticraft 绑定/打印代理），每个分栏是一张独立 `CARD`，**增删类（两个名单）即时保存**、表单类（启动器/单价/anticraft 配置）要点「保存设置」。两个名单（`settings.free_users`、`settings.anticraft_admin_users`）是**表格 + 添加/移除**，并用 `/api/users` 交叉核对「本站有没有这个账号」（写错的名字不会生效，表格里标注出来）。
 - **用户头像**（2026-09-15）：`users.avatar` 存**文件名**（空 = 首字母占位），文件放 `data/avatars/<user_id>-<毫秒>.<ext>`——换头像就是换文件名，天然免缓存（**响应仍要 `Cache-Control: no-store`**：删了头像后浏览器会拿旧缓存，实测踩过，侧栏一直显示已删的头像）。
   接口：`POST /api/profile/avatar`（png/jpg/gif/webp、≤2MB，**按文件头 magic 判断**是否真图片，换新的会删旧的）、`DELETE /api/profile/avatar`（清列 + 删文件，重复调用不报错）、`GET /api/users/{id}/avatar`（**登录即可看**，文件名形状限定 `<id>-*` 防穿越）。头像在「我的配置」页上传/预览/移除，并显示在侧栏用户卡片；**换/删头像后前端广播 `AVATAR_EVENT`（`api.ts`）**，`App.tsx` 监听到就重拉一次（否则侧栏要刷新页面才变，实测踩过）。接口都要 Bearer，所以前端是 blob → objectURL 渲染。
+- **点当前页的导航项 = 重新进入（回到初始状态）**（2026-09-16，用户反馈「提交后从其他界面切到提交打印界面要回到主界面」）：
+  `renderNavLink` 的 `onClick` 里比较 `location.pathname === to`，相同就把挂在 `<Routes key={pageNonce}>` 上的
+  `pageNonce` +1 —— react-router 对**同一个地址**不会重挂载，不这么做的话「提交成功」卡片（以及第二步、已选文件）
+  会一直留着，用户再点侧栏「提交打印」看不出任何变化。切到别的页面再切回来本来就会重挂载（`<Routes>` 按路由卸载），
+  这条补的是「原地再点一次」。用例：`node .tmp-test/ui-test-reset-submit.mjs`。
 - **深链与刷新**：`App.tsx` 用 `hydrating` 区分「未登录」与「登录态还在水合」（有 token 但 `/api/me` 未返回）——**水合期间 `RequireAuth` 只显示「正在加载…」，不跳登录页**；否则会先跳 `/login`、水合完再命中 `/login` 的「已登录回角色主页」逻辑，把用户要去的页面丢掉（2026-09-15 修过：刷新 `/users`、`/admin`、`/balance` 全被扔到 `/queue`）。
 - **外壳**：`App.tsx` 是参考实现——侧栏导航分**两组**：日常入口（提交打印 / 我的任务 / 任务队列）排在上面、设置类（我的配置 / 管理设置 / 用户管理，`bottom: true`）贴在**底部用户卡片上方**，两组共用 `renderNavLink` 的样式与「小屏点完收起抽屉」逻辑；已登录 = 240px 可折叠侧栏（`w-60`↔`w-0`，主区 `ml-60`↔`ml-0` 过渡）+ 吸顶栏（`sticky top-0 bg-warm/80 backdrop-blur-md`，标题取自 `PAGE_META`）+ 右下角 toast；未登录 = 只有品牌条（登录页/回调页）。新页面照此风格写，不要再造导航。
 - **移动端适配（2026-09-15 起）**：断点用 Tailwind 默认（`lg` = 1024px）。① 侧栏：`<lg` 是**抽屉**（`fixed w-60` + `-translate-x-full` 收起，默认收起，点汉堡滑出、点遮罩或点导航自动收起）；`lg` 起才是常驻并把主区推到 `lg:ml-60`。**z 层级有硬性顺序：吸顶栏 `z-30` < 抽屉遮罩 `z-40` < 抽屉 `z-50`**（`App.tsx`）。遮罩必须比吸顶栏高，否则顶栏会压在遮罩上、抽屉滑过时顶栏不被压暗，看起来就是「导航栏和侧边栏互相覆盖」（2026-09-15 修过：两者原来都是 `z-30`，同级时 DOM 靠后的顶栏赢）。② 内边距：`px-4 py-3 md:px-8 md:py-4` 一档缩放，副标题 `<sm` 隐藏。③ 预览高度随屏幕：提交页预览 `h-[300px] sm:h-[480px]`，弹窗 `h-[60vh] lg:h-[80vh]`。④ 表格保持 `min-w-*` + 容器 `overflow-x-auto`（页面本身不允许横向滚动），队列页在 `<lg` 提示「左右滑动查看完整表格」；**队列页专门做了移动端裁剪**：`<md` 时表格 `min-w-[920px]`、「文件与设置」列收成 92px 的图标按钮（带文件数）点了弹窗看明细、**点整行弹出「任务详情」底部抽屉**（提交人/提交时间/配送方式与地址/备注/文件与设置，可滚动）——**操作按钮集中在抽屉底部固定条**（44px 高、`flex-1 basis-[45%]` 两列排布、`padding-bottom` 带 `env(safe-area-inset-bottom)`，拇指够得到），行内只留一个「详情 ›」入口（`md:hidden` 的内联操作换成它，桌面端完全不变）；弹窗底部按钮用 `flex-1 sm:flex-none` 撑满整行。抽屉按 `detailId` 从最新 `jobs` 里取数据，所以 15 秒刷新或操作后状态会自动更新；抽屉里的操作执行完自动关闭。⑤ 新增页面的验收要跑 `.tmp-test/ui-test14.mjs`（390×844 视口，检查每页 `documentElement.scrollWidth <= innerWidth`、抽屉行为、两步提交可走通）。
@@ -421,9 +774,17 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
    动过张数/扣费逻辑后，另跑 `e2e.py` 与 `ui-test13/16/19.mjs` 确认老用例没被 402 拦住（测试账号要先充值）；
 8. **代理断开/重连**：`backend\.venv\Scripts\python.exe .tmp-test/agent_link_test.py` + `node .tmp-test/ui-test18.mjs` 全绿；**跑完必须确认 `settings.agent_enabled` 已回到 `1`**（用例收尾会断言，别把本机留在「已断开」——那样后续 e2e 的代理会全 403）；
 9. **Office（Word/PPT）**：`backend\.venv\Scripts\python.exe .tmp-test\office_convert_test.py`（34 项）+ `node .tmp-test\ui-test17.mjs`（13 项）全绿；**动过转换链路或换/重装服务器后**，另跑线上冒烟 `PROD_ADMIN_PW=... backend\.venv\Scripts\python.exe .tmp-test\prod_office_check.py`（提交 docx → 预览是 PDF → 删除任务，**不审批所以不会出纸**）。
-10. **虚拟打印机**：`backend\.venv\Scripts\python.exe .tmp-test\vprinter_test.py`（81 项；开头等 61 秒腾清登录限速窗口、收尾删掉自己建的测试任务）全绿；
+10. **虚拟打印机**：`backend\.venv\Scripts\python.exe .tmp-test\vprinter_test.py`（163 项；开头等 61 秒腾清登录限速窗口、收尾删掉自己建的测试任务）全绿；
     动过托盘/配置界面还可以跑 `powershell -File .tmp-test\tray_check.ps1`（列通知栏图标与窗口标题）与 `tray_flyout_check.ps1`（点开溢出层找 AntiPrint）；
     **改了 Windows 建队列脚本**则跑 `powershell -ExecutionPolicy Bypass -File vprinter\install\install-printer-windows.ps1 -DryRun`（不改系统）。
-11. **虚拟打印机 exe**：`bash deploy/pack-vprinter.sh` 后跑 `backend\.venv\Scripts\python.exe .tmp-test\vprinter_exe_test.py`（32 项）全绿 ——
-    它验的是「exe 真的能跑、能提交、托盘图标真出现、配置窗口真起来、zip 内容对」，改过打包脚本或冻结相关代码必跑。
+11. **虚拟打印机 exe（绿色版）**：`bash deploy/pack-vprinter.sh` 后跑 `backend\.venv\Scripts\python.exe .tmp-test\vprinter_exe_test.py`（56 项）全绿 ——
+    它验的是「exe 真的能跑、绿色模式数据就地存、非提权安装给对提示、能提交、托盘图标真出现、配置窗口真起来、zip 内容对」，
+    改过打包脚本或冻结/绿色相关代码必跑。**队列的 UAC 安装（真建队列）在本机非管理员会话里测不了**，
+    要在管理员机器上点一次「一键安装打印机队列」确认。
 
+12. **API 文档页 / 虚拟打印机页**：`backend\.venv\Scripts\python.exe .tmp-test\api_docs_test.py`（25 项）+
+    `node .tmp-test/ui-test-docs-vprinter.mjs`（26 项）全绿 —— 改过 `api_docs.py`（出厂文档正文）、
+    `downloads.py`（安装包清单）、`deploy/pack.sh` 的上传步骤，或动过前端这两页/`index.css` 的 `.md-body`
+    必跑。UI 用例会**真下载 23MB 的 zip** 并比对字节数，跑之前确认 `dist/AntiPrintVPrinter-*.zip` 在
+    （没有包时用例会失败在「下载到 zip」这一条，属预期）。**文档正文改了要同步改 `api_docs.py`**，
+    否则线上「恢复默认」会把用户带回旧文档。

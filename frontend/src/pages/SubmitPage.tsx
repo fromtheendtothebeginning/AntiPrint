@@ -30,7 +30,6 @@ import FileChips, { formatSize } from '../components/FileChips'
 import {
   DELIVER,
   NUP_OPTIONS,
-  PAPER_OPTIONS,
   PICKUP,
   SCALE_OPTIONS,
   describePrintOptions,
@@ -751,19 +750,13 @@ function SubmitPage() {
               </label>
               <label className="block" htmlFor="file-settings-paper">
                 <span className="mb-1 block text-xs text-gray-500 dark:text-gray-400">纸张大小</span>
-                <select
+                {/* 2026-09-16 起固定 A4：目标机型是 A4 黑白激光，纸张不再给选择 */}
+                <div
                   id="file-settings-paper"
-                  className={SELECT_CLASS}
-                  value={settings.paper}
-                  disabled={submitting}
-                  onChange={(event) => updateSettings({ paper: event.target.value })}
+                  className={`${SELECT_CLASS} flex items-center text-gray-500 dark:text-gray-400`}
                 >
-                  {PAPER_OPTIONS.map((value) => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
-                  ))}
-                </select>
+                  A4（固定）
+                </div>
               </label>
               <label className="block" htmlFor="file-settings-pages">
                 <span className="mb-1 block text-xs text-gray-500 dark:text-gray-400">页面范围</span>

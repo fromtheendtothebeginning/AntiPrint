@@ -11,7 +11,7 @@
 | 前端 | `frontend/` | React 18 + Vite + TypeScript。登录 / 提交打印 / 我的任务 / 管理后台 |
 | 服务端 | `backend/` | FastAPI + MySQL 8 + PyMySQL。鉴权、任务状态机、代理调度、静态托管前端 |
 | 打印代理 | `agent/` | Windows 常驻小程序：轮询任务 → SumatraPDF 静默打印 → 回报结果 |
-| 虚拟打印机 | `vprinter/` | 给**用户**用的桌面程序（Windows / macOS / Linux）：装一台名叫 `ANTIPRINT` 的虚拟打印机，在任意程序里打印它就等于**把内容转成 PDF 并提交到本站**；右下角有托盘图标与配置界面。Windows 可打成**单文件 exe**（`bash deploy/pack-vprinter.sh`，对方不用装 Python）。用法见 [vprinter/README.txt](vprinter/README.txt) |
+| 虚拟打印机 | `vprinter/` | 给**用户**用的桌面程序（Windows / macOS / Linux）：装一台名叫 `ANTIPRINT` 的虚拟打印机，在任意程序里打印它就等于**把内容转成 PDF 并提交到本站**；右下角有托盘图标与配置界面。Windows 有**绿色版单文件 exe**（`bash deploy/pack-vprinter.sh`）：解压后双击即用，打印队列由程序引导安装（点一下、确认 UAC 即可），账号配置与日志就在 exe 旁边。用法见 [vprinter/README.txt](vprinter/README.txt) |
 
 数据流：`用户提交 → 待审核 → 管理员同意 → 已通过 → 代理领取（打印中）→ 已打印 → 管理员勾选 待配送/待取件 → 已完成`；异常支线：`已驳回`（必填理由，可改后重提）、`打印失败`（可重新入队）。
 
@@ -26,6 +26,8 @@
 | 我的配置 | 所有用户 | 默认配送地址与方式、anticraft 绑定、**上传/更换头像**（png/jpg/gif/webp，≤2MB） |
 | 用户管理 | 管理员 / 超级管理员 | 账号操作中心：免费账户开关、调整余额（管理员）；加/收管理员、删除账号（超级管理员，余额须为 0） |
 | 我的任务 | 所有用户 | 看自己任务的状态、驳回理由、打印错误，被驳回后可改地址/备注重提 |
+| 虚拟打印机 | 所有用户 | **下载桌面客户端**（当前开放 Windows x86-64 的 zip；macOS/Linux 标注「暂未开放」）+ 四步使用说明与常见问题。装上后在任意软件 Ctrl+P 选「AntiPrint-1.0.0」就等于提交打印任务 |
+| API 文档 | 所有用户（**管理员可直接在页面上编辑**） | 打印 API 的认证、参数表、错误码与可直接运行的 Python 示例。正文是 Markdown，管理员改完所有用户立刻看到，点「恢复默认」回到随版本发布的那份 |
 | 我的配置 | 所有用户 | **默认配送地址**、**默认配送方式**、**绑定 / 解绑 anticraft 账号** |
 | 任务队列 | 管理员 | 审核（同意 / 驳回 / 重新入队）、预览文件，出纸后**勾选**「待配送 / 待取件」再勾「已完成」 |
 | 管理设置 | 管理员 | 打印代理状态、启动器 / 目标打印机 / 份数 / 演练模式、anticraft 绑定应用、代理令牌 |
@@ -67,6 +69,8 @@ backend\.venv\Scripts\python.exe agent\print_agent.py --dry-run    :: 演练：�
 用户/管理：`POST /api/register`、`POST /api/login`、`POST /api/login/anticraft`、`GET /api/me`、`POST /api/jobs`（multipart：`address` + `note` + `delivery_mode` + `files`）、`GET /api/jobs/mine`、`GET /api/jobs`（管理员）、`GET /api/jobs/{id}`、`GET /api/jobs/{id}/files/{fid}`、`POST /api/jobs/{id}/approve|reject|resubmit|retry`、`POST /api/jobs/{id}/advance`（交接流转，body `{to}`）、`DELETE /api/jobs/{id}`、`GET/POST /api/settings`、`POST /api/settings/rotate-agent-token`。
 
 用户配置：`GET /api/profile`、`PUT /api/profile`（默认地址 / 默认配送方式）、`POST /api/profile/anticraft/bind-ticket`（绑定用一次性票据）、`POST /api/profile/anticraft/unbind`（解绑并设置本地密码）。
+
+文档与下载：`GET /api/docs/api`（API 文档正文，登录可读）、`PUT /api/docs/api`（管理员改文档，body `{content}`，传空 = 恢复出厂文档）、`GET /api/downloads`（安装包清单）、`GET /api/downloads/{id}`（下载安装包，当前只有 `windows-x64`；需要登录）。
 
 anticraft 账号绑定：`GET /api/oauth/anticraft/status`（是否已配置）、`GET /api/oauth/anticraft/start`（302 跳授权页）、`GET /api/oauth/anticraft/callback`（anticraft 回跳，换令牌并建号）、`POST /api/oauth/anticraft/exchange`（一次性票据换本地登录态）。
 

@@ -12,6 +12,7 @@ UPLOAD_DIR = DATA_DIR / "uploads"      # 上传文件落盘根目录：uploads/<
 CONVERTED_DIR = DATA_DIR / "converted"  # Office 转 PDF 缓存：converted/<sha256>.pdf（内容寻址，见 convert.py）
 AVATAR_DIR = DATA_DIR / "avatars"      # 用户头像：avatars/<user_id>-<时间戳>.<扩展名>（换头像即换文件名，天然免缓存）
 COVER_DIR = DATA_DIR / "covers"        # 任务信息页（封面页）的中间产物与 PDF：covers/job-<id>-<时间>.pdf
+DOWNLOADS_DIR = DATA_DIR / "downloads"  # 给用户下载的安装包（虚拟打印机 zip，见 downloads.py）
 LOG_DIR = BASE_DIR / "log"             # 日志目录：log/server.log
 DIST_DIR = BASE_DIR.parent / "frontend" / "dist"   # 前端构建产物（生产由 FastAPI 静态托管）
 
@@ -48,6 +49,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 CONVERTED_DIR.mkdir(parents=True, exist_ok=True)
 AVATAR_DIR.mkdir(parents=True, exist_ok=True)
 COVER_DIR.mkdir(parents=True, exist_ok=True)
+DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _load_db_config():

@@ -74,7 +74,6 @@ try {
 
   console.log('\n2. 给第一个文件改设置：份数/纸张/页面范围/每张页数 → 预览随之变化')
   await page.locator('#file-settings-copies').fill('2')
-  await page.selectOption('#file-settings-paper', 'A3')
   await page.locator('#file-settings-pages').fill('2-3')
   await page.selectOption('#file-settings-nup', '2,2')
   await page.waitForTimeout(900)
@@ -82,21 +81,23 @@ try {
   check('页面范围生效：预览跳到第 2 页', /#page=2/.test(src2), src2.slice(-24))
   const step1b = await page.locator('body').innerText()
   check('提示按 N 页/张排版（预览为单页视图）', /打印时按 4 页\/张排版/.test(step1b), '')
-  check('设置摘要里出现「2 份」与「A3」', /2 份/.test(step1b) && /A3/.test(step1b), '')
+  check('设置摘要里出现「2 份」与固定的「A4」', /2 份/.test(step1b) && /A4/.test(step1b) && !/A3/.test(step1b), '')
   await shot(page, 'A2-step1-settings-applied')
 
   console.log('\n3. 切到第二个文件：用的是它自己的设置，预览变成图片')
   await page.getByRole('button', { name: /选中文件 test-image\.png/ }).click()
   await page.waitForTimeout(900)
   check('切换后份数回到该文件的默认 1', (await page.locator('#file-settings-copies').inputValue()) === '1', '')
-  check('切换后纸张回到该文件的默认 A4', (await page.locator('#file-settings-paper').inputValue()) === 'A4', '')
+  check('纸张始终是固定 A4（不再给选择）',
+        /A4（固定）/.test(await page.locator('#file-settings-paper').innerText()),
+        await page.locator('#file-settings-paper').innerText())
   check('预览切换为图片（img 出现、iframe 消失）',
         (await page.locator('#file-preview img').count()) > 0 && (await page.locator('#file-preview iframe').count()) === 0, '')
   // 再切回 PDF，设置应保留
   await page.getByRole('button', { name: /选中文件 test-print\.pdf/ }).click()
   await page.waitForTimeout(800)
-  check('切回 PDF 后设置仍保留（2 份 / A3 / 2-3）',
-        (await page.locator('#file-settings-copies').inputValue()) === '2' && (await page.locator('#file-settings-paper').inputValue()) === 'A3'
+  check('切回 PDF 后设置仍保留（2 份 / 2-3）',
+        (await page.locator('#file-settings-copies').inputValue()) === '2'
         && (await page.locator('#file-settings-pages').inputValue()) === '2-3', '')
 
   console.log('\n4. 第二步：配送方式与备注（可来回切换且不丢状态）')

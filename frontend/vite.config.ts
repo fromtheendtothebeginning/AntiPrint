@@ -12,7 +12,9 @@ export default defineConfig({
     port: 3010,
     host: '127.0.0.1',
     proxy: {
-      '/api': { target: 'http://127.0.0.1:8301', changeOrigin: true },
+      // 用 '^/api/' 而不是 '/api'：前缀匹配会把前端路由 /apidocs 也代理到后端
+      // （dev 下就表现为「拿到后端托管的那份构建产物、脚本 404 白屏」，2026-09-17 踩到）
+      '^/api/': { target: 'http://127.0.0.1:8301', changeOrigin: true },
     },
   },
 })

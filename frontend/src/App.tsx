@@ -12,6 +12,8 @@ import {
   useNavigate,
 } from 'react-router-dom'
 import {
+  BookOpen,
+  Download,
   FileText,
   ListChecks,
   LogOut,
@@ -43,6 +45,8 @@ import ProfilePage from './pages/ProfilePage'
 import QueuePage from './pages/QueuePage'
 import AdminPage from './pages/AdminPage'
 import UsersPage from './pages/UsersPage'
+import ApiDocsPage from './pages/ApiDocsPage'
+import VprinterPage from './pages/VprinterPage'
 import type { LucideIcon } from 'lucide-react'
 import { ROLE_LABEL } from './constants'
 import type { User as UserType } from './types/api'
@@ -51,6 +55,8 @@ import type { User as UserType } from './types/api'
 const PAGE_META: Record<string, { title: string; subtitle: string }> = {
   '/submit': { title: '提交打印', subtitle: '上传文件、选择配送方式并填写地址，管理员审核通过后由本机打印代理出纸' },
   '/mine': { title: '我的任务', subtitle: '查看自己提交的打印任务与审核、打印、交接进度' },
+  '/vprinter': { title: '虚拟打印机', subtitle: '下载桌面客户端：在任意软件里 Ctrl+P 选「AntiPrint-1.0.0」就等于提交打印任务' },
+  '/apidocs': { title: 'API 文档', subtitle: '打印 API 的参数、错误码与 Python 示例（管理员可直接在页面上编辑）' },
   '/balance': { title: '我的余额', subtitle: '账户余额、单价与打印扣费 / 退费记录（充值暂未开放）' },
   '/profile': { title: '我的配置', subtitle: '默认配送地址与配送方式，以及 anticraft 账号绑定' },
   '/queue': { title: '任务队列', subtitle: '审核打印任务，并在出纸后勾选待配送 / 待取件与完成' },
@@ -97,6 +103,8 @@ function App() {
     () => typeof window === 'undefined' || window.innerWidth >= 1024,
   )
   const [notice, setNotice] = useState('')
+  /** 挂在 <Routes> 上的 key：点当前页的导航项时 +1，让页面重挂载回到初始状态（见 renderNavLink） */
+  const [pageNonce, setPageNonce] = useState(0)
 
   // 挂载时若已有令牌，调 me() 验活并刷新用户信息
   useEffect(() => {
@@ -178,7 +186,7 @@ function App() {
   }, [navigate])
 
   const routes = (
-    <Routes>
+    <Routes key={pageNonce}>
       <Route
         path="/login"
         element={
@@ -223,6 +231,22 @@ function App() {
         element={
           <RequireAuth user={user} hydrating={hydrating}>
             <ProfilePage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/vprinter"
+        element={
+          <RequireAuth user={user} hydrating={hydrating}>
+            <VprinterPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/apidocs"
+        element={
+          <RequireAuth user={user} hydrating={hydrating}>
+            <ApiDocsPage isAdmin={(user?.role ?? 'user') !== 'user'} />
           </RequireAuth>
         }
       />
@@ -293,6 +317,8 @@ function App() {
   const navItems = [
     { to: '/submit', label: '提交打印', Icon: Upload, admin: false },
     { to: '/mine', label: '我的任务', Icon: FileText, admin: false },
+    { to: '/vprinter', label: '虚拟打印机', Icon: Download, admin: false },
+    { to: '/apidocs', label: 'API 文档', Icon: BookOpen, admin: false },
     { to: '/queue', label: '任务队列', Icon: ListChecks, admin: true },
     { to: '/balance', label: '我的余额', Icon: Wallet, admin: false, bottom: true },
     { to: '/profile', label: '我的配置', Icon: UserCog, admin: false, bottom: true },
@@ -321,6 +347,10 @@ function App() {
       onClick={() => {
         // 小屏是抽屉：点完导航就收起，免得挡住内容
         if (window.innerWidth < 1024) setSidebarOpen(false)
+        // 点的就是当前这一页 → 当成「重新进入」：换掉路由树上的 key 让页面重挂载、回到初始状态。
+        // 典型场景：提交完停在「提交成功」卡片上，再点「提交打印」应该回到干净的第一步；
+        // react-router 对「同一个地址」不会重挂载，不这样处理状态会一直留着。
+        setPageNonce((value) => (location.pathname === to ? value + 1 : 0))
       }}
     >
       <Icon className="h-[18px] w-[18px] shrink-0" />

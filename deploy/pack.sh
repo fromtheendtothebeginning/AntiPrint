@@ -48,6 +48,21 @@ for f in \$(ls -1); do grep -q \"\$f\" ../index.html || { rm -f \"\$f\"; echo \"
 echo "[4/5] 重启 $SERVICE"
 ssh "$SERVER" "systemctl restart $SERVICE && sleep 6 && systemctl is-active $SERVICE"
 
+echo "[4b/5] 上传虚拟打印机安装包（「虚拟打印机」页的下载用它）"
+# 安装包 23MB，不进上面那个 tar（backend/data 本来就是排除项），单独 scp 到线上 data/downloads/
+# 本地没打过分发包就跳过 —— 页面上会诚实显示「服务器上还没放安装包」
+VP_ZIP=$(ls -1t dist/AntiPrintVPrinter-*.zip 2>/dev/null | head -1 || true)
+if [[ -n "$VP_ZIP" ]]; then
+  REMOTE_DL="$REMOTE_DIR/backend/data/downloads"
+  ssh "$SERVER" "mkdir -p $REMOTE_DL"
+  scp -q "$VP_ZIP" "$SERVER:$REMOTE_DL/"
+  # 只留最新一份：旧版本的包页面就不该再下到，免得用户装错版本
+  ssh "$SERVER" "cd $REMOTE_DL && ls -1t AntiPrintVPrinter-*.zip 2>/dev/null | tail -n +2 | xargs -r rm -f; ls -lh $REMOTE_DL | tail -3"
+  echo "      已上传 $(basename "$VP_ZIP")（$(du -h "$VP_ZIP" | cut -f1)）"
+else
+  echo "      本机 dist/ 里没有 AntiPrintVPrinter-*.zip，跳过（要先跑 bash deploy/pack-vprinter.sh）"
+fi
+
 echo "[5/5] 自测"
 ssh "$SERVER" "curl -s --max-time 8 http://127.0.0.1:8301/api/health; echo"
 curl -s --max-time 15 -o /dev/null -w "      ${BASE_URL}/ → HTTP %{http_code}\n" "$BASE_URL/" || true

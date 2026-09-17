@@ -4,7 +4,9 @@ import type {
   AdminUserRow,
   Agent,
   AnticraftOauthStatus,
+  ApiDocs,
   DeliveryMode,
+  DownloadPackage,
   Job,
   JobStatus,
   Profile,
@@ -449,5 +451,68 @@ export const api = {
     const res = await rawRequest('/api/preview/office', { method: 'POST', body: form })
     if (!res.ok) throw new Error((await readErrorDetail(res)).message)
     return res.blob()
+  },
+
+  /** API 文档正文（Markdown；管理员没改过时是出厂文档） */
+  async getApiDocs(): Promise<ApiDocs> {
+    return request<ApiDocs>('/api/docs/api')
+  },
+
+  /** 管理员改 API 文档；传空字符串 = 恢复出厂文档 */
+  async saveApiDocs(content: string): Promise<ApiDocs> {
+    return request<ApiDocs>('/api/docs/api', { method: 'PUT', body: { content } })
+  },
+
+  /** 虚拟打印机安装包清单（哪些平台开放了、多大、指纹） */
+  async getDownloads(): Promise<DownloadPackage[]> {
+    const data = await request<{ packages: DownloadPackage[] }>('/api/downloads')
+    return data.packages
+  },
+
+  /**
+   * 下载安装包：接口要 Bearer 头，所以用 XHR 拉 Blob（顺带能报进度），再由调用方触发保存。
+   * 23MB 的文件用 fetch 拿不到下载进度，XHR 的 onprogress 才行。
+   */
+  downloadPackage(id: string, onProgress?: (percent: number) => void): Promise<{ blob: Blob; filename: string }> {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      xhr.open('GET', `/api/downloads/${id}`)
+      const token = getToken()
+      if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+      xhr.responseType = 'blob'
+      xhr.onprogress = (event) => {
+        if (onProgress && event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100))
+      }
+      xhr.onerror = () => reject(new Error('网络中断，下载失败'))
+      xhr.onload = () => {
+        if (xhr.status === 401) {
+          clearToken()
+          onAuthExpired?.()
+          reject(new Error('登录已过期，请重新登录后再下载'))
+          return
+        }
+        if (xhr.status !== 200) {
+          const reader = new FileReader()
+          reader.onload = () => {
+            let message = `下载失败（HTTP ${xhr.status}）`
+            try {
+              const parsed: unknown = JSON.parse(String(reader.result))
+              const detail = (parsed as { detail?: unknown }).detail
+              if (typeof detail === 'string' && detail.trim()) message = detail
+            } catch {
+              // 响应不是 JSON：用状态码兜底
+            }
+            reject(new Error(message))
+          }
+          reader.readAsText(xhr.response as Blob)
+          return
+        }
+        const disposition = xhr.getResponseHeader('Content-Disposition') ?? ''
+        const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition)
+        const filename = match ? decodeURIComponent(match[1]) : `AntiPrint-${id}.zip`
+        resolve({ blob: xhr.response as Blob, filename })
+      }
+      xhr.send()
+    })
   },
 }
