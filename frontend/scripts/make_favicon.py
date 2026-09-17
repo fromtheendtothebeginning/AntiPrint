@@ -6,6 +6,7 @@
    favicon.svg           现代浏览器（矢量）
    favicon.ico           老浏览器 / Windows 快捷方式（内嵌 16/32/48 PNG）
    apple-touch-icon.png  iOS 主屏（180px）
+   logo.png              对外分享用的方图标（512px，随构建发布到站点根，可作图床链接）
 纯标准库实现（zlib + struct 手写 PNG/ICO，不引 Pillow、不起浏览器）。
 
 改图标后重跑：backend\\.venv\\Scripts\\python.exe frontend/scripts/make_favicon.py
@@ -197,5 +198,6 @@ SVG = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {BOX:g} {BOX:g}" 
 (OUT / "favicon.svg").write_text(SVG, encoding="utf-8")
 (OUT / "favicon.ico").write_bytes(make_ico([16, 32, 48]))
 (OUT / "apple-touch-icon.png").write_bytes(make_png(180))
-for name in ("favicon.svg", "favicon.ico", "apple-touch-icon.png"):
+(OUT / "logo.png").write_bytes(make_png(512))
+for name in ("favicon.svg", "favicon.ico", "apple-touch-icon.png", "logo.png"):
     print(f"  {name}: {(OUT / name).stat().st_size} 字节")
