@@ -105,6 +105,9 @@ try {
   const body = await page.locator('body').innerText()
   check('页面说明「打印=提交任务」这件事', body.includes('AntiPrint-1.0.0') && body.includes('Ctrl'))
   check('Windows 卡片可下载（有「下载 zip」按钮）', await page.getByRole('button', { name: /下载 zip/ }).count() === 1)
+  const iconLabels = await page.locator('svg[aria-label]').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')))
+  check('三个平台用的是官方品牌图标（Windows / macOS / Linux 的矢量标记，不是通用显示器/终端图标）',
+    ['Windows', 'macOS', 'Linux'].every((name) => iconLabels.includes(name)), iconLabels.join(' / '))
   check('macOS 卡片标「暂未开放」', body.includes('macOS') && body.includes('暂未开放'))
   check('Linux 卡片也在（同样暂未开放）',
     body.includes('Linux') && (body.match(/暂未开放/g) || []).length >= 2)

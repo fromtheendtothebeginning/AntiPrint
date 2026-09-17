@@ -1,18 +1,9 @@
 // 虚拟打印机：安装包下载 + 使用方法说明（用户端）
 // 只有 Windows x86-64 的 zip 安装包开放下载（后端 downloads.py 的清单说了算，这里不硬编码）
 import { useEffect, useState } from 'react'
-import {
-  AlertTriangle,
-  Apple,
-  Check,
-  Download,
-  Info,
-  LoaderCircle,
-  Monitor,
-  Printer,
-  TerminalSquare,
-} from 'lucide-react'
+import { AlertTriangle, Check, Download, Info, LoaderCircle, Printer } from 'lucide-react'
 import { api, getErrorMessage } from '../api'
+import { AppleIcon, LinuxIcon, WindowsIcon } from '../components/OsIcons'
 import type { DownloadPackage } from '../types/api'
 
 const CARD = 'rounded-2xl bg-white p-6 shadow-xl shadow-black/[0.04] dark:bg-ink-soft'
@@ -21,10 +12,11 @@ const ALERT_ERROR =
 const BTN_PRIMARY =
   'inline-flex items-center gap-2 rounded-xl bg-brand px-5 py-2.5 text-sm font-medium text-white shadow-lg shadow-brand/25 transition-all duration-200 hover:-translate-y-0.5 hover:bg-brand-dark disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0'
 
-const PLATFORM_ICON: Record<string, typeof Monitor> = {
-  'windows-x64': Monitor,
-  macos: Apple,
-  linux: TerminalSquare,
+/** 每个平台：品牌图标 + 品牌色小方块（深色模式各自换一种可读的色） */
+const PLATFORM_STYLE: Record<string, { Icon: typeof WindowsIcon; tile: string; glyph: string }> = {
+  'windows-x64': { Icon: WindowsIcon, tile: 'bg-[#0078D4]/10 dark:bg-[#0078D4]/20', glyph: 'text-[#0078D4]' },
+  macos: { Icon: AppleIcon, tile: 'bg-gray-900/10 dark:bg-white/10', glyph: 'text-gray-900 dark:text-gray-100' },
+  linux: { Icon: LinuxIcon, tile: 'bg-[#FCC624]/25 dark:bg-[#FCC624]/15', glyph: 'text-[#a9781a] dark:text-[#FCC624]' },
 }
 
 const STEPS: { title: string; body: string }[] = [
@@ -130,7 +122,8 @@ function VprinterPage() {
         ) : (
           <div className="space-y-3">
             {packages.map((pkg) => {
-              const Icon = PLATFORM_ICON[pkg.id] ?? Monitor
+              const style = PLATFORM_STYLE[pkg.id] ?? PLATFORM_STYLE['windows-x64']
+              const Icon = style.Icon
               const downloadable = pkg.open && pkg.ready
               return (
                 <div
@@ -138,7 +131,11 @@ function VprinterPage() {
                   className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-gray-100 p-4 dark:border-white/10"
                 >
                   <div className="flex min-w-0 items-start gap-3">
-                    <Icon className="mt-0.5 h-5 w-5 shrink-0 text-gray-400" />
+                    <span
+                      className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${style.tile} ${style.glyph}`}
+                    >
+                      <Icon className="h-5 w-5" />
+                    </span>
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-gray-800 dark:text-gray-100">
                         {pkg.label}
