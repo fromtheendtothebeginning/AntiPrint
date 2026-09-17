@@ -33,7 +33,7 @@ deploy*.bat
 Thumbs.db
 desktop.ini
 *.log
-.temp-test
+.temp-test/
 
 # 会话/计划产物
 .zcode/
