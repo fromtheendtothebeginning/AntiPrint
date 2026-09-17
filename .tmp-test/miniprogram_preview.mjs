@@ -95,9 +95,12 @@ global.getApp = () => ({})
 const escapeHtml = (text) => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 const escapeAttr = (text) => escapeHtml(text).replace(/"/g, '&quot;')
 // 图片转 data URI：about:blank 文档里加载 file:// 子资源会被 Chromium 拦掉
+// （页面里已经是 data URI 的图——小程序的 logo 就是——原样返回）
 const imageCache = new Map()
 const imagePath = (src) => {
-  const file = path.join(MP, String(src).replace(/^\//, ''))
+  const raw = String(src)
+  if (raw.startsWith('data:')) return raw
+  const file = path.join(MP, raw.replace(/^\//, ''))
   if (!imageCache.has(file)) {
     const data = fs.existsSync(file) ? fs.readFileSync(file).toString('base64') : ''
     imageCache.set(file, data ? `data:image/png;base64,${data}` : '')
@@ -146,6 +149,33 @@ function mountPage(name) {
   base.lifetimes.attached.call(instance)
   captured.methods.onLoad.call(instance, {})
   return instance
+}
+
+// MP_EXPAND=1：提交页先把「打印设置」点开再截图（收起是默认态，展开态要单独看有没有溢出）
+const EXPAND = process.env.MP_EXPAND === '1'
+
+function textOf(node) {
+  if (!node) return ''
+  if (node.nodeType === 3) return node.textContent || ''
+  let out = ''
+  for (const child of node.childNodes || []) out += textOf(child)
+  return out
+}
+
+/** 后序遍历找「最内层」含该文字的节点（与 miniprogram_test.cjs 的 findNode 同一套） */
+function findByText(node, text) {
+  if (!node || node.nodeType === 3) return null
+  for (const child of node.childNodes || []) {
+    const hit = findByText(child, text)
+    if (hit) return hit
+  }
+  return textOf(node).includes(text) ? node : null
+}
+
+function clickText(instance, text) {
+  const node = findByText(instance.document.body, text)
+  if (!node) throw new Error(`预览里找不到要点击的「${text}」`)
+  node.dispatchEvent(new instance.window.CustomEvent('click', { bubbles: true, cancelable: true }))
 }
 
 // ── 真实 wxss（编译产物，样式已内联进 app.wxss）──
@@ -212,8 +242,13 @@ const targets = process.argv.slice(2).length ? process.argv.slice(2) : ['login',
 for (const name of targets) {
   const instance = mountPage(name)
   await flush(140)
+  const expanded = EXPAND && name === 'submit'
+  if (expanded) {
+    clickText(instance, '打印设置')     // 展开：等 React 重渲染完再序列化
+    await flush(140)
+  }
   const html = buildHtml(name, serialize(instance.document.body))
-  const suffix = SCALE ? `-${SCALE}` : ''
+  const suffix = `${SCALE ? `-${SCALE}` : ''}${expanded ? '-expanded' : ''}`
   fs.writeFileSync(path.join(SHOTS, `${name}${suffix}.html`), html)
   const page = await ctx.newPage()
   await page.setContent(html, { waitUntil: 'load' })

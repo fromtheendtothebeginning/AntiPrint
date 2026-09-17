@@ -6,8 +6,9 @@
   2. /api/profile 带 default_address / default_delivery / billable / price / balance（提交页要用来预填与显示计费）
   3. /api/balance 返回 balance/billable/price/logs（余额页要用的字段）
   4. /api/jobs/mine 返回 {jobs:[...]}（任务页）
-  5. multipart 提交用字段名 files + address/delivery_mode/copies/paper → 新账号余额 0，期望 402 且 detail 是
-     {code: insufficient_balance, cost, balance, sheets}（小程序据此弹「余额不足」提示）
+  5. multipart 提交用字段名 files + address/delivery_mode/copies/paper/nup/scale → 新账号余额 0，期望 402 且 detail 是
+     {code: insufficient_balance, cost, balance, sheets}（小程序据此弹「余额不足」提示）；
+     乱填 nup / scale 必须在校验阶段 400（证明这两个字段真的进了后端白名单校验，不是被忽略）
 探针账号是本机新建的普通账号（余额 0），不碰线上、不用任何已有账号的口令。
 用法：backend\\.venv\\Scripts\\python.exe .tmp-test/miniprogram_api_check.py
 """
@@ -90,7 +91,16 @@ def main():
 
     print('\n[3] 提交（multipart，字段名与小程序一致）→ 新账号余额 0，期望 402 余额不足')
     files = {'files': ('小程序探针.pdf', tiny_pdf(), 'application/pdf')}
-    form = {'address': '小程序探针地址 101', 'delivery_mode': '配送', 'note': '接口契约实测', 'copies': '1', 'paper': 'A4'}
+    # 字段与小程序提交页 submitJob 发出的完全一致（含排版 nup 与缩放 scale）
+    form = {
+        'address': '小程序探针地址 101',
+        'delivery_mode': '配送',
+        'note': '接口契约实测',
+        'copies': '1',
+        'paper': 'A4',
+        'nup': '2,1',
+        'scale': 'noscale',
+    }
     res = requests.post(f'{BASE}/api/jobs', headers=headers, files=files, data=form, timeout=60)
     detail = {}
     try:
@@ -104,6 +114,12 @@ def main():
         json.dumps(detail, ensure_ascii=False)[:200],
     )
     check('没有因 402 建出任务', requests.get(f'{BASE}/api/jobs/mine', headers=headers, timeout=20).json().get('jobs') == [])
+
+    # 排版 / 缩放真的进了校验（否则上面那次 402 可能只是「字段被忽略」）：乱填要在建单之前 400
+    res = requests.post(f'{BASE}/api/jobs', headers=headers, files=files, data=dict(form, nup='9,9'), timeout=60)
+    check('非法排版（nup=9,9）被 400 拦下', res.status_code == 400 and '每面页数' in res.text, f'{res.status_code} {res.text[:160]}')
+    res = requests.post(f'{BASE}/api/jobs', headers=headers, files=files, data=dict(form, scale='bogus'), timeout=60)
+    check('非法缩放（scale=bogus）被 400 拦下', res.status_code == 400 and '缩放' in res.text, f'{res.status_code} {res.text[:160]}')
 
     print('\n[4] 未登录访问（小程序登录页会先看本地令牌，令牌无效就跳登录）')
     res = requests.get(f'{BASE}/api/jobs/mine', timeout=20)

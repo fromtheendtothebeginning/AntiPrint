@@ -79,7 +79,9 @@
 
 | 提交后回到提交页主界面（2026-09-16） | `node .tmp-test/ui-test-reset-submit.mjs`（8 项） | 8/8 全通过：提交成功卡片出现 → 切「我的任务」再切回「提交打印」在第一步（投放区可见、没有第二步按钮/成功卡片）；**停在成功卡片上直接点侧栏「提交打印」（同一地址）也回到第一步**（修的就是这条）；测试任务已删、页面 JS 错误 0 |
 | **API 文档页 + 虚拟打印机页 线上部署**（2026-09-17） | `bash deploy/pack.sh`（含新的第 4b 步上传安装包）→ 线上匿名探测 | 部署后：`/apidocs`、`/vprinter` 都 200（SPA 路由打点正常）；`/api/docs/api`、`/api/downloads`、`/api/downloads/windows-x64` 未登录一律 **401**（路由已上线）；线上 `index-emVHVRrk.js` 里能搜到「虚拟打印机 / API 文档 / 下载 zip / 编辑文档 / /api/downloads」；**23MB 的 `AntiPrintVPrinter-1.0.0.zip` 已上传到 `data/downloads/`**（部署脚本打印了服务器上的 `-rw-r--r-- 23M …`）；`/api/health` = `{"ok":true,"db":"ok"}`；旧构建资源被自动清理。**又发过一次**（品牌图标 + `logo.png`）：线上 `index-DetTlk95.js` 里三条 `aria-label: Windows/macOS/Linux` 都在（图标确实是新的）、`/logo.png` 200 + `image/png` 6720B 且 **sha256 与本地一致**、两个页面仍 200、下载接口仍 401。**未实测**：带登录态的线上下载（本机没有线上账号口令，`prod_office_check.py` 那套要 `PROD_ADMIN_PW`），登录后点「下载 zip」这一步等用户在线上点一次 |
-| **API 文档页 + 虚拟打印机页**（2026-09-17） | `backend\.venv\Scripts\python.exe .tmp-test/api_docs_test.py`（25 项）+ `node .tmp-test/ui-test-docs-vprinter.mjs`（27 项） | 接口 25/25 全通过：文档未登录 401 / 登录可读 / 未改过时 `custom=false` 且正文 = 出厂文档 / 普通用户 PUT 403 / admin PUT 200 且回 `updated_by`+时间 / 改完持久化（另一个账号读到新版本）/ 超长（200001 字）400 / 传空 = 恢复出厂；下载清单三个平台（只 `windows-x64` `open+ready`，报出文件名/版本/22.6MB/64 位 sha256，且**不含任何服务器路径**）/ 未登录 401 / 未开放平台 404 / **乱写 id 含 `../etc/passwd` 一律 404**（不接受路径）/ 下载 200 且是 zip（`PK\x03\x04`、字节数 = 清单大小、**sha256 与清单一致**、`Content-Disposition: attachment` + `no-store`）/ 服务器给的就是仓库 `dist/` 里那个包。UI 27/27 全通过：普通用户能读文档（**渲染出 5 个表格、8 个代码块**、能看到 `POST /api/jobs` 与 requests 示例）但没有「编辑文档」按钮；管理员「编辑文档」→ 改名/加内容 → 保存 → 页面渲染新内容 + 页头变「本站自定义文档」+ 服务端 `custom=true` → 「恢复默认」回到出厂文档；虚拟打印机页三种平台卡片（**图标是官方品牌标记**：`svg[aria-label]` 分别是 Windows / macOS / Linux）、Windows 只有一个「下载 zip」、macOS/Linux 标「暂未开放」、四步说明与常见问题齐、SHA-256 有展示；**浏览器真的下载到 zip 且字节数与清单一致**（23738526）；手机端（390）两页都无横向溢出；页面 JS 错误 0 |
+| **小程序提交页：打印设置选项 + 默认收起 + 底栏位置**（2026-09-17） | `cd miniprogram && npm.cmd run typecheck && npm.cmd run build` → `node .tmp-test/miniprogram_test.cjs`（69 项）+ `backend\.venv\Scripts\python.exe .tmp-test/miniprogram_api_check.py`（11 项，打真实本地后端） | 69/69 全通过（新增 12 项）：**打印设置默认收起**（只渲染标题 + 一行摘要「A4 · 适应纸张」，份数/页面范围等字段不渲染）→ 点卡片头展开后 `纸张固定 A4` 只有 A4 一项、**排版 6 个选项**（1/2（左右）/2（上下）/4/9/16 页每张）、**缩放 3 个选项**（适应纸张/实际大小/缩小到可打印区域）齐、默认高亮 3 个（A4 + 1 页/张 + 适应纸张）、排版提示「一张纸排一页」；[5b] 点「2 页/张（左右）」+「实际大小」→ 提示变「按 2 页/张排版」、**multipart 表单带上 `nup=2,1` 与 `scale=noscale`**、成功卡片按任务设置汇总出「每张 2 页 · 实际大小 · 第 1-2 页」；[5h] 新增回归：**预览失败时 `showLoading>hideLoading>showToast`**（开发者工具报过「必须配对使用」）+ 失败原因提示给用户。接口 11/11 全通过（真实后端 8301）：小程序现在发的完整表单（含 `nup=2,1` / `scale=noscale`）被接受（余额 0 → 402，不建单），**乱填 `nup=9,9` / `scale=bogus` 在校验阶段 400**（证明两个字段真进了后端白名单，不是被忽略）。`tsc --noEmit` 0 错误。**未实测**：真机/开发者工具里的 wxss 观感（缩小到可打印区域那行是否换行、展开动画）、真机刘海屏下底栏位置 |
+| **小程序界面精简 + 登录页 logo 修复**（2026-09-17） | `cd miniprogram && npm.cmd run typecheck && npm.cmd run build` → `node .tmp-test/miniprogram_test.cjs`（71 项）+ `node .tmp-test/miniprogram_preview.mjs login jobs profile`（截图 + 溢出检查） | 71/71 全通过（新增 4 项）：**「我的任务」文件行里不再有「预览文件」按钮**（点文件名仍可预览，[5e] 照旧走通）、**配置页没有「界面字号」档位**、**登录页与配置页都不显示「服务器」卡片**、**[5g] 本地残留 `antiprint_scale=xl` 不再生效**（页面根元素不挂 `scale-*`）；另两条 logo 护栏：登录页 `<img.hero-logo>` 的 src 必须 `data:image/png;base64,` 开头（防 kbone 补成网络地址）、内联 base64 与 `frontend/public/apple-touch-icon.png` **逐字节一致**。`tsc --noEmit` 0 错误。预览截图逐张看过：登录页只剩登录卡（logo 正常、服务器卡没了）、任务页文件行只剩「文件名 + 设置」、配置页 账号/默认配送/退出登录。**未实测**：开发者工具里 logo 是否真的不再裂（用户报的就是那边，等他们复看） |
+| **API 文档页 + 虚拟打印机页**（2026-09-17） | `backend\.venv\Scripts\python.exe .tmp-test/api_docs_test.py`（25 项）+ `node .tmp-test/ui-test-docs-vprinter.mjs`（27 项） | 接口 25/25 全通过：文档未登录 401 / 登录可读 / 未改过时 `custom=false` 且正文 = 出厂文档 / 普通用户 PUT 403 / admin PUT 200 且回 `updated_by`+时间 / 改完持久化（另一个账号读到新版本）/ 超长（200001 字）400 / 传空 = 恢复出厂；下载清单三个平台（只 `windows-x64` `open+ready`，报出文件名/版本/22.6MB/64 位 sha256，且**不含任何服务器路径**）/ 未登录 401 / 未开放平台 404 / **乱写 id 含 `../etc/passwd` 一律 404**（不接受路径）/ 下载 200 且是 zip（`PK\x03\x04`、字节数 = 清单大小、**sha256 与清单一致**、`Content-Disposition: attachment` + `no-store`）/ 服务器给的就是仓库 `dist/` 里那个包。UI 27/27 全通过：普通用户能读文档（**渲染出 5 个表格、8 个代码块**、能看到 `POST /api/jobs` 与 requests 示例）但没有「编辑文档」按钮；管理员「编辑文档」→ 改名/加内容 → 保存 → 页面渲染新内容 + 页头变「本站自定义文档」+ 服务端 `custom=true` → 「恢复默认」回到出厂文档；虚拟打印机页三种平台卡片（**图标是官方品牌标记**：`svg[aria-label]` 分别是 Windows / macOS / Linux）、Windows 只有一个「下载 zip」、macOS/Linux 标「暂未开放」、四步说明与常见问题齐、SHA-256 有展示；**浏览器真的下载到 zip 且字节数与清单一致**（23738526）；手机端（390）两页都无横向溢出；页面 JS 错误 0 | 接口 25/25 全通过：文档未登录 401 / 登录可读 / 未改过时 `custom=false` 且正文 = 出厂文档 / 普通用户 PUT 403 / admin PUT 200 且回 `updated_by`+时间 / 改完持久化（另一个账号读到新版本）/ 超长（200001 字）400 / 传空 = 恢复出厂；下载清单三个平台（只 `windows-x64` `open+ready`，报出文件名/版本/22.6MB/64 位 sha256，且**不含任何服务器路径**）/ 未登录 401 / 未开放平台 404 / **乱写 id 含 `../etc/passwd` 一律 404**（不接受路径）/ 下载 200 且是 zip（`PK\x03\x04`、字节数 = 清单大小、**sha256 与清单一致**、`Content-Disposition: attachment` + `no-store`）/ 服务器给的就是仓库 `dist/` 里那个包。UI 27/27 全通过：普通用户能读文档（**渲染出 5 个表格、8 个代码块**、能看到 `POST /api/jobs` 与 requests 示例）但没有「编辑文档」按钮；管理员「编辑文档」→ 改名/加内容 → 保存 → 页面渲染新内容 + 页头变「本站自定义文档」+ 服务端 `custom=true` → 「恢复默认」回到出厂文档；虚拟打印机页三种平台卡片（**图标是官方品牌标记**：`svg[aria-label]` 分别是 Windows / macOS / Linux）、Windows 只有一个「下载 zip」、macOS/Linux 标「暂未开放」、四步说明与常见问题齐、SHA-256 有展示；**浏览器真的下载到 zip 且字节数与清单一致**（23738526）；手机端（390）两页都无横向溢出；页面 JS 错误 0 |
 
 **测试中修掉的真 bug（勿回退）**：1. **代理把 `dry_run` 判断成恒真** —— 服务端下发的是字符串 `"0"`，`bool("0")` 在 Python 里是 `True`，导致代理永远只干跑却回报成功（任务被误标已打印）。已改为 `truthy()` 解析（`print_agent.py`），**任何服务端开关值都要走它**。
 2. **任务列表缺提交人** —— 管理页「提交人」列空白，`db.list_jobs/get_job` 已 JOIN `users.username`。
@@ -165,6 +167,18 @@
    于是 dev 下 `/apidocs` 被代理去 **8301**、拿到后端托管的那份**构建产物**（HTML 里是 `/assets/index-*.js`
    → dev 下 404 → 白屏）。修法：代理键改成带边界的正则 `'^/api/'`（Vite 支持 `^` 开头的正则键）。
    **排查提示**：dev 下白屏、而返回的 HTML 里出现 `/assets/` 哈希文件名 = 请求被代理到后端了。
+17. **小程序 `<img src="/images/...">` 被 kbone 补成网络地址 → 图裂**（2026-09-17 用户实测：登录页页头 logo 裂图）——
+   kbone 的 `<img>` 投影会过一道 `completeURL(src, window.location.origin, true)`
+   （`miniprogram-element/src/util/tool.js` 第 108 行），而它里面写的是：
+   `else if (url[0] === '/') url = (config.origin || defaultOrigin) + url` ——
+   于是**小程序标准的包内绝对路径** `/images/antiprint-logo.png` 变成 `https://<origin>/images/…`，
+   小程序拿它当网络图去拉（域名没白名单/根本不存在）→ 图裂。**预览脚本抓不到这个 bug**：它读的是 DOM 里的 `src`
+   并自己把本地文件转成 data URI，所以截图里 logo 一直是好的（真机/开发者工具才露馅）。
+   修法：图片**内联成 base64 data URI**（不在 `completeURL` 的改写范围内，`<image>` 官方支持 base64）——
+   logo 现在写在 `miniprogram/src/asset.ts`（由 `.tmp-test/make-miniprogram-logo.cjs` 从
+   `frontend/public/apple-touch-icon.png` 生成，`copy-runtime.js` 不再往 `dist/images/` 拷 logo 并会删掉老文件），
+   用例里两条护栏：「页头 logo 的 src 必须是 `data:image/png;base64,` 开头」+「内联的和网站那份 PNG 逐字节一致」。
+   **教训**：小程序里任何 `<img src>` 都别写以 `/` 开头的包内路径；换图/加图先想「kbone 会不会改写它」。
 
 ## 目录规划
 
@@ -196,7 +210,7 @@ miniprogram/       kbone 微信小程序（**独立工程，其它端源码不�
   src/index.js       小程序 app 入口（恢复登录态 + 引入全局样式）；src/page.ts 各页面的 createApp（挂 React、登录兜底、下拉刷新）
   src/api.ts         wx.request / wx.uploadFile / wx.downloadFile 的唯一出口；src/util.ts 格式化/徽章/进度步骤；src/app.css 全局样式
   src/components.tsx PageHeader（品牌色带）/ Card / Row / Btn / Segmented / ChipRow / Stepper / Badge / Steps（四步进度）/ Field / Alert
-  src/pages/         login（登录/注册）/ submit（选文件+份数纸张+配送，底部固定提交条）/ jobs（我的任务，含进度步骤）/ balance / profile
+  src/pages/         login（登录/注册）/ submit（选文件+打印设置（默认收起：份数/纸张A4/页面范围/排版/缩放）+配送，底部固定提交条）/ jobs（我的任务，含进度步骤）/ balance / profile
   tabbar/            tabBar 图标（scripts/make_tab_icons.py 生成，81×81，未选中灰/选中青绿）
   scripts/copy-runtime.js  构建后处理：kbone 运行时 → miniprogram_npm、logo → images/、样式内联进 app.wxss（见下）
   dist/             构建产物（gitignore）：**dist/ 本身就是小程序项目根**，开发者工具导入 miniprogram/dist/（不写 miniprogramRoot）
@@ -530,17 +544,33 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
   「文件系统」能力页原文：本地文件是**以用户维度隔离的小程序沙箱**（临时/缓存/用户文件共 200MB），「本地临时文件只能通过调用特定接口产生，不能直接写入内容」；
   文件分类里唯一与磁盘有关的是 `wx.saveFileToDisk`（「保存文件系统的文件到用户磁盘，**仅在 PC 端支持**」）——那是**写出**方向。
   **即：小程序没有任何「读入手机/电脑本地文件」的接口。**
-- **预览入口要做显眼**（用户反馈「找不到」）：选完文件后文件行下面是一整行 `btn-row`「预览文件 / 移除」（不是小灰字），
+- **预览入口**：提交页要做显眼（用户反馈「找不到」）—— 选完文件后文件行下面是一整行 `btn-row`「预览文件 / 移除」（不是小灰字），
   图片还会在文件行里直接给缩略图（`<img mode="aspectFill">`，mode 是微信属性，TS 里靠 `IMG_MODE` 透传）；
-  「我的任务」里每个文件右侧是 `btn-ghost` 的「预览文件」按钮。提交前预览用 `api.openLocalFile()`（本地临时路径）。
-- **界面字号可调（标准/大/特大）**：偏好存 `wx` 本地缓存 `antiprint_scale`，`page.ts` 的 `applyUiScale()` 把
-  `scale-lg` / `scale-xl` 写到 page 的 body 上（kbone 会同步到页面根元素的 class），wxss 里只覆盖几个 CSS 变量
-  （`--fs-hero/--fs-title/--fs-btn/--fs-body/--fs-label/--fs-small/--fs-tiny/--fs-amount`）即可整页缩放；
-  入口在「我的配置 → 界面字号」，改完立即生效（`applyUiScale()`），进任何页面时也会自动套用。
-  **原生 tabBar 与导航栏不跟着变**（那是微信的 UI，改不了），这是已知限制。
-- **打印设置只有「份数 + 页面范围」**（2026-09-16 按用户要求）：纸张**固定 A4**，不给用户选（机型与业务都只支持 A4，
-  提交时仍带 `paper=A4`）；页面范围走 `pages` 表单字段（只允许数字/逗号/短横线，≤64 字，与后端白名单一致，前端先拦一道）。
-  选完文件可以**先预览**再提交：`api.openLocalFile()`（图片 `wx.previewImage`、其余 `wx.openDocument`）。
+  提交前预览用 `api.openLocalFile()`（本地临时路径）。**「我的任务」反之：不放按钮**，点文件名（`.grow` 那块）即可预览
+  （2026-09-17 按用户要求把那一列的「预览文件」按钮去掉了 —— 用例断言该页不再出现「预览文件」字样，别再顺手加回来）。
+- **界面字号档位已移除**（2026-09-17 按用户要求「把我的配置中的界面字号去掉」）：`page.ts` 的 `applyUiScale()`、
+  `util.ts` 的 `getUiScale/setUiScale/UiScale`、wxss 的 `.h5-body.scale-lg/.scale-xl`、配置页那个 Segmented 全删了。
+  **别再读本地缓存 `antiprint_scale`** —— 用过「特大」的人机器上还留着这个键，读了就会把人卡在大字号里出不来
+  （用例 [5g] 就是拿「本地存着 xl」来断言页面不再挂 `scale-*`）。字号改回只用 `app.css` 的 `--fs-*` 一组变量。
+- **登录页 / 配置页不显示「服务器」卡片**（2026-09-17 按用户要求去掉，同一个 `SERVER` 常量在 `api.ts` 里照样用于所有请求）：
+  页面上不再出现服务器地址（用例断言两页都不含「服务器」与 `print.anticraft.top`）；换地址只能改 `api.ts` 的 `SERVER` 常量再构建。
+- **打印设置默认收起，展开后是 份数 / 纸张大小 / 页面范围 / 排版 / 缩放**（2026-09-17 按用户要求：先按「加缩放、排版、
+  纸张大小（固定 A4）」加齐选项，再把整张卡片改成默认收起）。取值**全部复用 web 端的 `@shared/constants`**
+  （`PAPER_OPTIONS` / `NUP_OPTIONS` / `SCALE_OPTIONS` / `describePrintOptions`），逐项进 multipart 表单
+  （`copies` / `paper` / `pages` / `nup` / `scale` = `POST /api/jobs` 的任务级字段，白名单校验在 `backend/main.py` 的
+  `_build_print_options`）。要点：① 纸张**固定 A4**（只有 A4 一项，点了也是 A4 —— 机型与业务都只支持 A4）；
+  ② 排版就是 `nup`（"1,1"/"2,1"/"1,2"/"2,2"/"3,3"/"4,4"），非 1 页/张时提示「按 N 页/张排版，更省纸；计费按实际张数算」；
+  ③ 收起时只留一行摘要（`describePrintOptions`：「2 份 · A4 · 第 1-3 页 · 每张 4 页 · 适应纸张」），点卡片头展开
+  （`.card-head-tap` 撑到 44px 触摸高度）；④ `ChipRow` 现在同时接受纯字符串与 `{value,label}`（排版/缩放的标签与取值不同名）；
+  ⑤ `reset()`（成功后「再提交一份」）连 nup/scale 一起复位。页面范围仍在前端先拦一道
+  （只允许数字/逗号/短横线、≤64 字，与后端白名单一致）。选完文件可以**先预览**再提交：`api.openLocalFile()`
+  （图片 `wx.previewImage`、其余 `wx.openDocument`）。
+- **提交页底部操作条的下内边距只留 6px、不写 `env(safe-area-inset-bottom)`**（2026-09-17 按用户要求「按钮往下面放一点」）：
+  页面视口本来就在原生 tabBar 之上，安全区由 tabBar 让开，再叠一层 safe-area 会在刘海机型/模拟器上多出一截空隙。
+  改高度时同步看 `.wrap-with-bar` 的 `padding-bottom`（84px，给内容留出不被浮条压住的空间）。
+- **loading 与提示必须配对**（2026-09-17 开发者工具实测报错）：`wx.showToast` 会顶掉 `wx.showLoading`，
+  之后再 `hideLoading` 就报「请注意 showLoading 与 hideLoading 必须配对使用」。统一走 `util.withLoading(title, task)` ——
+  它**先收 loading 再弹提示**。别在页面里自己写 showLoading/try/finally/hideLoading 那套（用例 [5h] 专门验顺序）。
 - **文件预览**：`wx.downloadFile`（带 `Authorization` 头）→ `wx.openDocument`（PDF/Office，后端已把 Office 转成 PDF）；
   **图片走 `wx.previewImage`**（openDocument 不支持图片）。头像同理不可用（`<image src>` 带不了请求头），所以小程序不做头像。
 - **构建**：`npm.cmd run build` = `webpack --mode production` + `node scripts/copy-runtime.js`。
@@ -549,13 +579,19 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
   产物布局：**`dist/` 本身就是项目根**（`project.config.json` 写在 `dist/` 根上，**不设 `miniprogramRoot`**）：
   `app.js/app.json/app.wxss/config.js/sitemap.json/project.config.json` + `common/`（webpack 产物，含被 `app.wxss` @import 的 `app.css`）
   + `pages/` + `miniprogram_npm/`；**开发者工具导入 `miniprogram/dist/`**。`dist/`、`node_modules/` 已被根 `.gitignore` 覆盖。
-- **两条已在开发者工具里实测的硬约束**（2026-09-16，两条都踩过）：
+- **三条已在开发者工具里实测的硬约束**（2026-09-16 / 2026-09-17，三条都踩过）：
   ① **抽出来的样式必须叫 `.wxss`**：`new MiniCssExtractPlugin({filename: '[name].wxss'})`。小程序的 `@import` 只认 wxss 扩展名，
      用 `.css` 时即使 `dist/common/app.css` 真实存在，开发者工具也报 ``[WXSS 文件编译错误] path `common/app.css` not found from `./app.wxss` ``。
      （`copy-runtime.js` 会顺手清掉历史构建留下的 `common/*.css`。插件侧对 `.css`/`.wxss` 都做了 adjustCss 处理，所以改名是安全的。）
   ② **项目根 = 代码根**：插件生成的路径都按此假设（根上 `app.wxss` 里 `@import "common/…"`、页面 wxss 里 `@import "../../common/…"`、
      `sitemap.json`、tabBar 图标目录）。加 `miniprogramRoot` 把代码根往下挪一层，或把项目根设在代码目录的上一层，
      会报 `[app.json 文件内容错误] app.json: 在项目根目录未找到 app.json`。**判断选对了没有：选中的目录里直接就有 `app.json`。**
+  ③ **域名校验的开关在开发者工具的「本地设置」里，构建脚本写的那份会被工具改写**（2026-09-17 用户实测：
+     点任务文件预览报 `downloadFile 合法域名校验出错`）—— `copy-runtime.js` 每次构建都往 `dist/project.private.config.json`
+     写 `urlCheck: false`（不校验），但开发者工具会**用自己的界面状态覆盖这个文件**：界面上没勾「不校验合法域名、
+     web-view、TLS 版本以及 HTTPS 证书」时，它把 `urlCheck` 改回 `true`，于是请求全被拦（`print.anticraft.top` 不在白名单）。
+     **改文件没用，得在「详情 → 本地设置」里勾上**（真机/发布仍必须在微信后台登记 request/uploadFile/downloadFile 域名）。
+     排查提示：`dist/project.private.config.json` 里的 `urlCheck` 与你界面上勾没勾是同一件事。
 - **样式注意**：kbone 的 `adjust-css` 会改写 wxss 里的选择器（`html`→`page`、标签名→taglist、**含 `~` 的选择器直接丢弃**），
   所以 `src/app.css` 只用类选择器 + `page`，类名与网站配方一一对应（`card` / `btn-primary` / `badge-amber` / `step` / `hero`…）。
 - **样式不再走 `@import`**：构建后处理会把 `common/app.wxss` 的内容**内联进 `dist/app.wxss`**（并删掉那个文件）。
@@ -563,7 +599,8 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
   「path `common/app.css` not found from `./app.wxss`」。内联后 app.wxss 是自包含的，样式一定生效，也不再依赖 `/p` 的解析。
 - **界面（2026-09-16 重写）**：导航栏品牌青绿 + 白字（`app.json` window 段）、每页 `navigationBarTitleText`（`pages[name].extra`）；
   页面顶部有同色「色带」（`PageHeader`：标题/说明/信息胶囊），内容卡片上移 24px 压住色带；任务卡带四步进度
-  （`util.jobSteps()`：已提交→审核→打印→交接，驳回/撤回/失败不显示进度）；提交页按钮固定在 `.bottom-bar`（fixed，自动让开原生 tabBar）；
+  （`util.jobSteps()`：已提交→审核→打印→交接，驳回/撤回/失败不显示进度）；提交页按钮固定在 `.bottom-bar`（fixed，
+  下内边距 6px、不叠 safe-area —— 页面视口已在原生 tabBar 之上，见上一条「打印设置」附近的说明）；
   触摸高度 ≥44px。tabBar 图标是自绘的（`scripts/make_tab_icons.py`，纯标准库 PNG），改图标后重跑该脚本再 `npm run build`。
 - **本地预览 + 横向溢出检查（没有开发者工具也能看效果）**：`node .tmp-test/miniprogram_preview.mjs [页面...]` ——
   用 kbone 运行时把产物渲染成 HTML、套上真实 `dist/app.wxss` 与导航栏/tabBar 外壳，chromium 截图到

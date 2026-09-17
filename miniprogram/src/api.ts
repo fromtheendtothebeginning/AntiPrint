@@ -239,6 +239,10 @@ class Api {
     paper?: string
     /** 页面范围，如 1-3,5（留空 = 全部页面） */
     pages?: string
+    /** 每张纸排几页（"行,列"，如 1,1 / 2,1 / 2,2）；白名单见 backend/constants.PRINT_NUP */
+    nup?: string
+    /** 缩放：fit 适应纸张 / noscale 实际大小 / shrink 缩小到可打印区域 */
+    scale?: string
   }): Promise<Job> {
     const formData: Record<string, string> = {
       address: options.address || '',
@@ -246,6 +250,8 @@ class Api {
       note: options.note || '',
       copies: String(options.copies || 1),
       paper: options.paper || 'A4',
+      nup: options.nup || '1,1',
+      scale: options.scale || 'fit',
     }
     if (options.pages && options.pages.trim()) formData.pages = options.pages.trim()
     const data = await this.upload<{ job: Job }>('/api/jobs', options.filePath, formData)

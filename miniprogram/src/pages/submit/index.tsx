@@ -3,13 +3,22 @@
 import * as React from 'react'
 import api, { insufficientBalance, stageFile, dropStagedFile } from '../../api'
 import type { InsufficientBalanceDetail } from '../../api'
-import { Alert, Badge, Btn, Card, Field, PageHeader, Row, Segmented, Stepper } from '../../components'
+import { Alert, Badge, Btn, Card, ChipRow, Field, PageHeader, Row, Segmented, Stepper } from '../../components'
 import { createPage, go } from '../../page'
-import { billingHint, formatMoney, formatSize, onShow, toast } from '../../util'
-import { DELIVER, PICKUP, describePrintOptions } from '@shared/constants'
-import type { DeliveryMode, Job, Profile } from '@shared/types/api'
+import { billingHint, formatMoney, formatSize, onShow, toast, withLoading } from '../../util'
+import { DELIVER, NUP_OPTIONS, PAPER_OPTIONS, PICKUP, SCALE_OPTIONS, describePrintOptions } from '@shared/constants'
+import type { DeliveryMode, Job, PrintOptions, Profile } from '@shared/types/api'
 
 const MAX_FILE_MB = 10
+
+/** 纸张固定 A4：目标机型（HP LaserJet P1106）只放得下 A4，其它尺寸打不出来 */
+const PAPER = PAPER_OPTIONS[0]
+
+/** 每张纸上的页数（nup 形如 "2,2" = 2 行 × 2 列） */
+function nupPages(nup: string): number {
+  const [rows, cols] = nup.split(',').map((n) => Number(n) || 1)
+  return rows * cols
+}
 
 /** 图片缩略图的填充方式：mode 是小程序 <image> 的属性，React 的 DOM 类型里没有，透传过去 */
 const IMG_MODE = { mode: 'aspectFill' } as unknown as React.ImgHTMLAttributes<HTMLImageElement>
@@ -25,6 +34,9 @@ function SubmitPage() {
   const [file, setFile] = React.useState<PickedFile | null>(null)
   const [copies, setCopies] = React.useState(1)
   const [pages, setPages] = React.useState('')   // 页面范围，如 1-3,5（留空 = 全部）
+  const [nup, setNup] = React.useState('1,1')    // 排版（每张页数），取值见 @shared/constants 的 NUP_OPTIONS
+  const [scale, setScale] = React.useState('fit')  // 缩放：fit 适应纸张 / noscale 实际大小 / shrink 缩小到可打印区域
+  const [openSettings, setOpenSettings] = React.useState(false)  // 打印设置默认收起：点卡片头才展开（选项较多，收起来页面更短）
   const [mode, setMode] = React.useState<DeliveryMode>(DELIVER)
   const [address, setAddress] = React.useState('')
   const [note, setNote] = React.useState('')
@@ -118,14 +130,7 @@ function SubmitPage() {
   /** 提交前预览自己选的文件（本地临时路径，直接交给小程序文档/图片预览） */
   const previewLocal = async () => {
     if (!file) return
-    wx.showLoading({ title: '正在打开…', mask: true })
-    try {
-      await api.openLocalFile(file.path, file.name)
-    } catch (err) {
-      toast(err instanceof Error ? err.message : '无法预览该文件')
-    } finally {
-      wx.hideLoading()
-    }
+    await withLoading('正在打开…', () => api.openLocalFile(file.path, file.name))
   }
 
   const submit = async () => {
@@ -154,6 +159,8 @@ function SubmitPage() {
         note: note.trim(),
         copies,
         pages,
+        nup,
+        scale,
       })
       setResult(job)
       toast('提交成功，等待管理员审核')
@@ -169,12 +176,20 @@ function SubmitPage() {
 
   const isImage = !!file && /\.(png|jpe?g|gif|webp|bmp)$/i.test(file.name)
 
+  /** 打印设置收起时的一行摘要（与网站任务卡片同一套文案：describePrintOptions） */
+  const printSummary = describePrintOptions(
+    { paper: PAPER, pages: pages.trim() || undefined, nup, scale: scale as PrintOptions['scale'] },
+    copies,
+  )
+
   const reset = () => {
     setFile(null)
     setResult(null)
     setNote('')
     setCopies(1)
     setPages('')
+    setNup('1,1')
+    setScale('fit')
   }
 
   // ── 提交成功 ──
@@ -255,19 +270,47 @@ function SubmitPage() {
           </div>
         </Card>
 
-        <Card title="打印设置" extra="纸张固定 A4">
-          <Field label="份数" hint="与页面范围一起决定计费张数">
-            <Stepper value={copies} min={1} max={99} onChange={setCopies} />
-          </Field>
-          <Field label="页面范围" hint="留空打印全部页面；支持 1-3,5 这种写法" last>
-            <input
-              className="input"
-              value={pages}
-              onChange={(e) => setPages(e.target.value)}
-              placeholder="如 1-3,5（留空 = 全部）"
-            />
-          </Field>
-        </Card>
+        {/* 打印设置默认收起：选项变多后卡片太长，只留一行摘要，点标题展开调整 */}
+        <div className="card">
+          <div className="card-head card-head-tap" onClick={() => setOpenSettings(!openSettings)}>
+            <div className="card-title">打印设置</div>
+            <div className="card-extra">{openSettings ? '收起' : '展开'}</div>
+          </div>
+          {openSettings ? (
+            <React.Fragment>
+              <Field label="份数" hint="与页面范围一起决定计费张数">
+                <Stepper value={copies} min={1} max={99} onChange={setCopies} />
+              </Field>
+              <Field label="纸张大小" hint="纸张固定 A4（打印机只放得下 A4，其它尺寸打不出来）">
+                {/* 只有 A4 一个选项：点它也是 A4，别让用户以为能换纸 */}
+                <ChipRow value={PAPER} options={[PAPER]} onChange={() => undefined} />
+              </Field>
+              <Field label="页面范围" hint="留空打印全部页面；支持 1-3,5 这种写法">
+                <input
+                  className="input"
+                  value={pages}
+                  onChange={(e) => setPages(e.target.value)}
+                  placeholder="如 1-3,5（留空 = 全部）"
+                />
+              </Field>
+              <Field
+                label="排版（每张页数）"
+                hint={
+                  nupPages(nup) === 1
+                    ? '一张纸排一页'
+                    : `按 ${nupPages(nup)} 页/张排版，更省纸；计费按实际张数算`
+                }
+              >
+                <ChipRow value={nup} options={NUP_OPTIONS} onChange={setNup} />
+              </Field>
+              <Field label="缩放" hint="不确定就保持「适应纸张」" last>
+                <ChipRow value={scale} options={SCALE_OPTIONS} onChange={setScale} />
+              </Field>
+            </React.Fragment>
+          ) : (
+            <div className="muted">{printSummary}</div>
+          )}
+        </div>
 
         <Card title="配送与备注">
           <Field label="配送方式">

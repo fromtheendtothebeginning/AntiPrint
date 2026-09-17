@@ -1,10 +1,9 @@
-// 我的配置：账号信息 / 默认配送方式与地址（提交页会自动带出来）/ 服务器 / 退出登录
+// 我的配置：账号信息 / 默认配送方式与地址（提交页会自动带出来）/ 退出登录
 import * as React from 'react'
 import api from '../../api'
 import { Alert, Btn, Card, Field, PageHeader, Row, Segmented } from '../../components'
-import { applyUiScale, createPage, goLogin } from '../../page'
-import { confirm, formatMoney, getUiScale, setUiScale, toast } from '../../util'
-import type { UiScale } from '../../util'
+import { createPage, goLogin } from '../../page'
+import { confirm, formatMoney, toast } from '../../util'
 import { DELIVER, PICKUP, ROLE_LABEL } from '@shared/constants'
 import type { DeliveryMode, Profile } from '@shared/types/api'
 
@@ -16,7 +15,6 @@ function ProfilePage() {
   const [busy, setBusy] = React.useState(false)
   const [loading, setLoading] = React.useState(true)
   const [dirty, setDirty] = React.useState(false)
-  const [scale, setScale] = React.useState<UiScale>(getUiScale())
 
   React.useEffect(() => {
     api
@@ -111,28 +109,6 @@ function ProfilePage() {
               {busy ? '正在保存…' : dirty ? '保存配置' : '已是最新'}
             </Btn>
           </div>
-        </Card>
-
-        <Card title="界面字号" extra="只影响显示，不影响打印">
-          <Segmented<UiScale>
-            value={scale}
-            onChange={(value) => {
-              setScale(value)
-              setUiScale(value)
-              applyUiScale()
-            }}
-            options={[
-              { value: 'std', label: '标准' },
-              { value: 'lg', label: '大' },
-              { value: 'xl', label: '特大' },
-            ]}
-          />
-          <div className="field-hint">看不清时调大一号；设置会记在本机，各页面都生效。</div>
-        </Card>
-
-        <Card title="服务器">
-          <div className="text ellipsis">{api.server}</div>
-          <div className="field-hint">换服务器地址请到登录页的「服务器地址」卡片修改。</div>
         </Card>
 
         <Card>

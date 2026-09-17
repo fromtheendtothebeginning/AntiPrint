@@ -102,19 +102,26 @@ export function Segmented<T extends string>(props: {
   )
 }
 
-/** 横向可换行的选项块（纸张等枚举值） */
-export function ChipRow<T extends string>(props: {
+/** 横向可换行的选项块（纸张 / 排版 / 缩放这类枚举值；选项是纯字符串或 {value,label}） */
+export function ChipRow(props: {
   value: string
-  options: readonly T[]
-  onChange: (value: T) => void
+  options: readonly (string | { value: string; label: string })[]
+  onChange: (value: string) => void
 }) {
   return (
     <div className="chips">
-      {props.options.map((item) => (
-        <div key={item} className={`chip${item === props.value ? ' chip-on' : ''}`} onClick={() => props.onChange(item)}>
-          {item}
-        </div>
-      ))}
+      {props.options.map((item) => {
+        const option = typeof item === 'string' ? { value: item, label: item } : item
+        return (
+          <div
+            key={option.value}
+            className={`chip${option.value === props.value ? ' chip-on' : ''}`}
+            onClick={() => props.onChange(option.value)}
+          >
+            {option.label}
+          </div>
+        )
+      })}
     </div>
   )
 }

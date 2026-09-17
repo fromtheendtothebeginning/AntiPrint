@@ -11,8 +11,7 @@ page {
   line-height: 1.55;
 }
 
-/* 字号缩放（「我的配置」里可选 标准/大/特大）：文字尺寸统一走这几个变量，缩放档位只覆盖变量。
-   kbone 会把 body 上的 class 同步到页面根元素，所以 .scale-* 能作用于整页。 */
+/* 文字尺寸统一走这几个变量（改字号只动这里；2026-09-17 按用户要求去掉了「界面字号」档位与 .scale-*） */
 .h5-body {
   --fs-hero: 20px;
   --fs-title: 15px;
@@ -23,27 +22,6 @@ page {
   --fs-tiny: 11px;
   --fs-amount: 34px;
 }
-.h5-body.scale-lg {
-  --fs-hero: 23px;
-  --fs-title: 17px;
-  --fs-btn: 17px;
-  --fs-body: 16px;
-  --fs-label: 15px;
-  --fs-small: 14px;
-  --fs-tiny: 13px;
-  --fs-amount: 38px;
-}
-.h5-body.scale-xl {
-  --fs-hero: 26px;
-  --fs-title: 19px;
-  --fs-btn: 19px;
-  --fs-body: 18px;
-  --fs-label: 17px;
-  --fs-small: 16px;
-  --fs-tiny: 14px;
-  --fs-amount: 42px;
-}
-
 
 .page-root {
   padding-bottom: 20px;
@@ -126,6 +104,12 @@ page {
 .card-extra {
   font-size: var(--fs-small);
   color: #9a9a96;
+}
+/* 可点击的卡片头（打印设置的展开/收起）：撑到 44px 触摸高度，标题视觉位置基本不变 */
+.card-head-tap {
+  padding: 11px 0;
+  margin-top: -5px;
+  margin-bottom: 0;
 }
 
 /* ── 行 / 文本 ── */
@@ -243,15 +227,16 @@ page {
   margin-right: 0;
 }
 
-/* ── 底部固定操作条（提交页）── */
+/* ── 底部固定操作条（提交页，tabBar 页）── */
+/* 下边留 6px 就够：页面视口本来就在原生 tabBar 之上，安全区由 tabBar 让开；
+   这里再叠一层 env(safe-area-inset-bottom) 会在刘海机型上多出一截空隙，按钮显得悬在空中 */
 .bottom-bar {
   box-sizing: border-box;
   position: fixed;
   left: 0;
   right: 0;
   bottom: 0;
-  padding: 10px 12px;
-  padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  padding: 10px 12px 6px;
   background: rgba(250, 248, 245, 0.97);
   border-top: 1px solid #f0ebe4;
 }

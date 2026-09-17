@@ -4,7 +4,7 @@
 import type { ReactElement } from 'react'
 import * as ReactDOM from 'react-dom'
 import api from './api'
-import { getUiScale, triggerRefresh, triggerShow } from './util'
+import { triggerRefresh, triggerShow } from './util'
 
 // kbone 页面私有的 window/document（只用到这几个能力，按需声明）
 interface KboneWindow {
@@ -18,7 +18,7 @@ interface KboneNode {
 
 interface KboneDocument {
   createElement: (tag: string) => KboneNode
-  body: { appendChild: (node: unknown) => void; className: string }
+  body: { appendChild: (node: unknown) => void }
 }
 
 /** createApp 的返回值：kbone 在页面卸载时会调用 unmount / $destroy */
@@ -27,17 +27,6 @@ export interface PageApp {
 }
 
 let pageWindow: KboneWindow | null = null
-let pageDocument: KboneDocument | null = null
-
-/**
- * 套用界面字号档位：kbone 会把 body 上的 class 同步到页面根元素，
- * wxss 里的 .h5-body.scale-lg / .scale-xl 只覆盖几个字号变量即可整页缩放。
- */
-export function applyUiScale(): void {
-  if (!pageDocument) return
-  const scale = getUiScale()
-  pageDocument.body.className = scale === 'lg' ? 'scale-lg' : scale === 'xl' ? 'scale-xl' : ''
-}
 
 /**
  * 创建页面（页面入口里 `export default function createApp() { return createPage(...) }`）。
@@ -53,8 +42,6 @@ export function createPage(
   const win = window as KboneWindow
   const doc = document as KboneDocument
   pageWindow = win
-  pageDocument = doc
-  applyUiScale()
   win.addEventListener('pulldownrefresh', triggerRefresh)
   // 切回本页（tab 页不会重建）时也通知一次，页面可以据此把结束态清掉
   win.addEventListener('wxshow', triggerShow)

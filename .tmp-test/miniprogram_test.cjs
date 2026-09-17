@@ -2,6 +2,7 @@
 // 把 webpack 产物里的 5 个页面真的挂起来，断言 React 渲染出的文本与登录兜底行为。
 // 说明：这里验的是「React + kbone DOM」这一层；真机/开发者工具的 wxss 与组件投影仍需人工跑一遍。
 // 用法：node .tmp-test/miniprogram_test.cjs
+const fs = require('fs')
 const path = require('path')
 
 const ROOT = path.resolve(__dirname, '..')
@@ -33,7 +34,8 @@ let modals = []
 let toasts2 = []
 let uploadStatus = 200
 let requestStatus = 200
-let uploadBody = { job: { id: 33, status: '待审核', address: '24 号楼 1016', delivery_mode: '配送', copies: 1, charge: '0.10', files: [{ id: 7, filename: '报告.docx', size: 2048, sha256: 'c' }] } }
+let uiCalls = []       // 记录 showLoading / hideLoading / showToast 的调用顺序（验「必须配对使用」）
+let uploadBody = { job: { id: 33, status: '待审核', address: '24 号楼 1016', delivery_mode: '配送', copies: 1, charge: '0.10', print_options: { copies: 1, paper: 'A4', pages: '1-2', nup: '2,1', scale: 'noscale' }, files: [{ id: 7, filename: '报告.docx', size: 2048, sha256: 'c' }] } }
 let modalConfirm = false
 let chosenFiles = [{ path: '/tmp/report.docx', name: '报告.docx', size: 2048 }]
 
@@ -130,10 +132,13 @@ global.wx = {
   setNavigationBarTitle: () => undefined,
   pageScrollTo: () => undefined,
   stopPullDownRefresh: () => undefined,
-  showToast: (options) => toasts.push(options && options.title),
+  showToast: (options) => {
+    uiCalls.push('showToast')
+    toasts.push(options && options.title)
+  },
   hideToast: () => undefined,
-  showLoading: () => undefined,
-  hideLoading: () => undefined,
+  showLoading: () => uiCalls.push('showLoading'),
+  hideLoading: () => uiCalls.push('hideLoading'),
   hideShareMenu: () => undefined,
   reLaunch: (options) => redirects.push(options && options.url),
   switchTab: (options) => redirects.push(options && options.url),
@@ -281,6 +286,28 @@ async function run() {
   check('没有令牌时不跳转', redirects.length === 0, redirects.join(','))
   check('未登录时不发请求（登录页免鉴权）', apiCalls.length === 0, apiCalls.join(','))
   check('根节点带 page-root 样式类', elementCount(login.document.body, 'page-root') === 1)
+  check(
+    '登录页不显示「服务器」卡片（2026-09-17 按用户要求去掉）',
+    !text.includes('服务器') && !text.includes('print.anticraft.top'),
+    text.slice(0, 200),
+  )
+  // 页头 logo 必须是内联的 data URI：kbone 的 <img> 投影会把 "/xxx.png" 补成 origin 网络地址 → 小程序里图裂
+  // （2026-09-17 开发者工具里实测；改回文件路径这条会红）
+  const heroImg = findNode(login.document.body, byClass('hero-logo'))
+  check(
+    '页头 logo 走内联 data URI（不能被 kbone 补成网络地址）',
+    !!heroImg && String(heroImg.src || '').startsWith('data:image/png;base64,'),
+    String(heroImg && heroImg.src).slice(0, 60),
+  )
+  // 守卫：内联的必须就是网站那份 PNG（换 logo 后要重跑 node .tmp-test/make-miniprogram-logo.cjs）
+  const assetSource = fs.readFileSync(path.join(ROOT, 'miniprogram', 'src', 'asset.ts'), 'utf8')
+  const embeddedLogo = (/base64,([A-Za-z0-9+/=]+)/.exec(assetSource) || [])[1] || ''
+  const websiteLogo = fs.readFileSync(path.join(ROOT, 'frontend', 'public', 'apple-touch-icon.png')).toString('base64')
+  check(
+    '内联 logo 与 frontend/public/apple-touch-icon.png 逐字节一致',
+    embeddedLogo.length > 0 && embeddedLogo === websiteLogo,
+    `内联 ${embeddedLogo.length} 字符 / 网站 ${websiteLogo.length} 字符`,
+  )
 
   // 已登录再进登录页 → 自动回提交页（走 kbone 的 location，内部用 wx.switchTab）
   storage = { antiprint_token: 'fake-token', antiprint_user: { id: 1, username: 'tester', role: 'user' } }
@@ -314,11 +341,43 @@ async function run() {
   check('默认从配置带出配送方式与地址', text.includes('配送上门') && submitInputs.includes('24 号楼 1016'), submitInputs.join('|'))
   check('有选文件入口（聊天记录 + 拍照/相册）', text.includes('选择文件（聊天记录里选）') && text.includes('拍照或从相册选图片'))
   check('提示了「手机里的文件」怎么选', text.includes('文件传输助手'))
-  check('有份数设置', text.includes('份数'))
-  check('纸张固定 A4（不再让用户选）', text.includes('纸张固定 A4') && !text.includes('A5') && !text.includes('Letter'))
+  check(
+    '打印设置默认收起（只留标题与一行摘要，字段都不渲染）',
+    text.includes('打印设置') && text.includes('展开') && !text.includes('排版（每张页数）') && !text.includes('页面范围'),
+    text.slice(0, 200),
+  )
+  check('收起时的摘要就是当前设置（A4 · 适应纸张）', text.includes('A4 · 适应纸张'), text.slice(0, 200))
+
+  // 点卡片头展开（点标题，事件冒泡到 .card-head-tap）
+  click(submit.window, findNode(submit.document.body, byText('打印设置')))
+  await flush(30)
+  const expanded = textOf(submit.document.body)
+  check(
+    '点标题展开打印设置（右侧变「收起」，各选项出现）',
+    expanded.includes('收起') && expanded.includes('排版（每张页数）') && expanded.includes('缩放'),
+    expanded.slice(0, 200),
+  )
+  check('有份数设置（展开后）', expanded.includes('份数'), expanded.slice(0, 200))
+  check('纸张固定 A4（只有 A4 一项，不给选别的尺寸）', expanded.includes('纸张固定 A4') && !expanded.includes('A5') && !expanded.includes('Letter'))
+  check(
+    '有排版（每张页数）选项',
+    expanded.includes('排版（每张页数）') && expanded.includes('1 页/张') && expanded.includes('2 页/张（左右）') && expanded.includes('16 页/张'),
+    expanded.slice(0, 200),
+  )
+  check(
+    '有缩放选项（适应纸张 / 实际大小 / 缩小到可打印区域）',
+    expanded.includes('缩放') && expanded.includes('适应纸张') && expanded.includes('实际大小') && expanded.includes('缩小到可打印区域'),
+    expanded.slice(0, 200),
+  )
+  check(
+    '默认选中 A4 / 1 页张 / 适应纸张（三个选项块高亮）',
+    elementCount(submit.document.body, 'chip-on') === 3,
+    String(elementCount(submit.document.body, 'chip-on')),
+  )
+  check('排版默认提示「一张纸排一页」', expanded.includes('一张纸排一页'), expanded.slice(0, 200))
   check(
     '有页面范围输入',
-    text.includes('页面范围') &&
+    expanded.includes('页面范围') &&
       !!findNode(submit.document.body, (node) => (node.tagName || '').toLowerCase() === 'input' && String(node.placeholder || '').includes('1-3,5')),
   )
 
@@ -337,7 +396,7 @@ async function run() {
     elementCount(jobs.document.body, 'badge-amber') >= 1 && elementCount(jobs.document.body, 'badge-violet') >= 1,
   )
   check('可撤回任务有撤回按钮（并带上任务详情）', text.includes('撤回'))
-  check('任务文件有「预览文件」按钮', text.includes('预览文件'))
+  check('文件行里没有「预览文件」按钮（2026-09-17 按用户要求去掉；点文件名仍可预览）', !text.includes('预览文件'), text.slice(0, 200))
 
   console.log('\n[4] 我的余额')
   apiCalls = []
@@ -358,13 +417,16 @@ async function run() {
   check('显示账号信息与角色', text.includes('tester') && text.includes('普通用户'))
   check('默认地址已载入表单', inputValues(profile.document.body).includes('24 号楼 1016'), inputValues(profile.document.body).join('|'))
   check('有退出登录按钮', text.includes('退出登录'))
-  check('有界面字号档位（标准/大/特大）', text.includes('界面字号') && text.includes('特大'))
-
-  // 选「大」→ 存进本地 + 页面根元素的 class 立刻变成 scale-lg（wxss 靠它覆盖字号变量）
-  click(profile.window, findNode(profile.document.body, byText('特大')))
-  await flush(30)
-  check('选特大后写入本地', wx.getStorageSync('antiprint_scale') === 'xl', String(wx.getStorageSync('antiprint_scale')))
-  check('选特大后页面根元素带上 scale-xl', String(profile.document.body.className).includes('scale-xl'), String(profile.document.body.className))
+  check(
+    '配置页没有「界面字号」档位（2026-09-17 按用户要求去掉）',
+    !text.includes('界面字号') && !text.includes('特大'),
+    text.slice(0, 200),
+  )
+  check(
+    '配置页不显示「服务器」卡片（同上，与登录页一起去掉）',
+    !text.includes('服务器') && !text.includes('print.anticraft.top'),
+    text.slice(0, 200),
+  )
 
   console.log('\n[5b] 提交任务（点选文件 → 提交 → 成功卡片）')
   uploads = []
@@ -372,6 +434,9 @@ async function run() {
   uploadStatus = 200
   const submit2 = loadPage('submit')
   await flush(60)
+  // 打印设置默认收起：先点标题展开，后面的选项交互才有点击目标
+  click(submit2.window, findNode(submit2.document.body, byText('打印设置')))
+  await flush(30)
   click(submit2.window, findNode(submit2.document.body, byText('选择文件（聊天记录里选）')))
   await flush(30)
   text = textOf(submit2.document.body)
@@ -399,18 +464,32 @@ async function run() {
   await flush(30)
   check('页面范围输入生效（按钮文案跟随）', textOf(submit2.document.body).includes('第 1-2 页'), textOf(submit2.document.body).slice(0, 200))
 
+  // 排版 / 缩放：点选项块 → 高亮跟过去 + 提示文案跟着变（提交时会带进表单）
+  click(submit2.window, findNode(submit2.document.body, byText('2 页/张（左右）')))
+  await flush(30)
+  click(submit2.window, findNode(submit2.document.body, byText('实际大小')))
+  await flush(30)
+  text = textOf(submit2.document.body)
+  check('点排版后提示文案跟随（按 2 页/张排版）', text.includes('按 2 页/张排版'), text.slice(0, 240))
+  check('点缩放后仍只高亮三个选项（A4 / 排版 / 缩放各一项）', elementCount(submit2.document.body, 'chip-on') === 3, String(elementCount(submit2.document.body, 'chip-on')))
+
   click(submit2.window, findNode(submit2.document.body, byText('提交打印任务')))
   await flush(60)
   check('提交走 multipart 上传（字段名 files）', uploads.length === 1 && uploads[0].name === 'files', JSON.stringify(uploads.map((item) => item.name)))
   const form = (uploads[0] || {}).formData || {}
   check(
-    '带上配送方式 / 地址 / 份数 / 纸张 / 页面范围',
-    form.delivery_mode === '配送' && form.address === '24 号楼 1016' && form.copies === '1' && form.paper === 'A4' && form.pages === '1-2',
+    '带上配送方式 / 地址 / 份数 / 纸张 / 页面范围 / 排版 / 缩放',
+    form.delivery_mode === '配送' && form.address === '24 号楼 1016' && form.copies === '1' && form.paper === 'A4' && form.pages === '1-2' && form.nup === '2,1' && form.scale === 'noscale',
     JSON.stringify(form),
   )
   check('上传地址指向 /api/jobs', String((uploads[0] || {}).url || '').endsWith('/api/jobs'), String((uploads[0] || {}).url))
   text = textOf(submit2.document.body)
   check('显示成功卡片（任务号 / 状态 / 扣费）', text.includes('提交成功') && text.includes('任务 #33') && text.includes('0.10'), text.slice(0, 160))
+  check(
+    '成功卡片按任务设置汇总（多页/排版/缩放都显示出来）',
+    text.includes('每张 2 页') && text.includes('实际大小') && text.includes('第 1-2 页'),
+    text.slice(0, 240),
+  )
   check('提交成功有提示', toasts.includes('提交成功，等待管理员审核'), toasts.join(','))
 
   // tabBar 页用 switchTab 切换不会重建页面：切回来（wxshow）应回到表单首页，而不是停在成功卡片
@@ -462,6 +541,23 @@ async function run() {
   )
   check('下载请求带 Authorization 头', !!(downloads[0] && downloads[0].header && downloads[0].header.Authorization))
 
+  console.log('\n[5h] 预览失败时 loading 与提示配对（开发者工具里报过「必须配对使用」）')
+  // 复现开发者工具里那次失败：downloadFile 被合法域名校验拦下 → 错误提示 + hideLoading 变成不配对
+  const okDownload = global.wx.downloadFile
+  global.wx.downloadFile = (options) => {
+    setTimeout(() => options.fail({ errMsg: 'downloadFile:fail 合法域名校验出错' }), 0)
+    return { abort: () => undefined }
+  }
+  uiCalls = []
+  toasts = []
+  const jobs4 = loadPage('jobs')
+  await flush(60)
+  click(jobs4.window, findNode(jobs4.document.body, byText('实验报告.docx')))
+  await flush(60)
+  check('先收 loading 再弹提示（hideLoading 在 showToast 之前）', uiCalls.join('>') === 'showLoading>hideLoading>showToast', uiCalls.join('>'))
+  check('失败原因提示给了用户', toasts.some((item) => String(item).startsWith('下载失败')), toasts.join(','))
+  global.wx.downloadFile = okDownload
+
   console.log('\n[5f] 登录态过期（401）→ 自动回登录页')
   storage = { antiprint_token: 'expired-token', antiprint_user: { id: 1, username: 'tester', role: 'user' } }
   requestStatus = 401
@@ -472,14 +568,14 @@ async function run() {
   check('401 后本地令牌被清掉', wx.getStorageSync('antiprint_token') === '', String(wx.getStorageSync('antiprint_token')))
   requestStatus = 200
 
-  console.log('\n[5g] 字号档位在新页面里继续生效')
-  // 模拟「上次已经存过档位」：直接读本地缓存里的值，进页面时应自动套用
+  console.log('\n[5g] 字号机制已移除：本地残留的旧档位不再生效')
+  // 老版本存过「特大」的用户：现在进任何页面都按标准字号渲染（不读本地缓存、不挂 scale-*）
   wx.setStorageSync('antiprint_scale', 'xl')
   const scaled = loadPage('submit')
   await flush(60)
   check(
-    '重新进页面仍套用「特大」',
-    String(scaled.document.body.className).includes('scale-xl'),
+    '页面根元素不再挂 scale-* 类（旧偏好被忽略）',
+    !String(scaled.document.body.className).includes('scale-'),
     String(scaled.document.body.className),
   )
   wx.removeStorageSync('antiprint_scale')

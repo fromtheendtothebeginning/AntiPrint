@@ -1,10 +1,11 @@
 // 构建后处理（npm run build 的第二步）：
 //   1. 把 kbone 运行时（miniprogram-render / miniprogram-element）放进 dist/miniprogram_npm/
 //      —— 等价于开发者工具的「构建 npm」，但用本工程已装好的版本、离线可重复
-//   2. 把品牌 logo 复制成 dist/images/antiprint-logo.png（登录页页头用）
-//   3. 把 dist/common/app.wxss 内联进 dist/app.wxss，并删掉那个被 @import 的文件
+//   2. 把 dist/common/app.wxss 内联进 dist/app.wxss，并删掉那个被 @import 的文件
 //      —— 不依赖 wxss 的 @import 解析（import 落在 400 行之后，且曾出现「找不到」的编译报错）
-//   4. 清掉插件生成的 package.json / node_modules/.miniprogram 标记与历史遗留样式文件
+//   3. 清掉插件生成的 package.json / node_modules/.miniprogram 标记与历史遗留样式文件
+//   4. 顺手删掉老构建留下的 dist/images/antiprint-logo.png（logo 现在内联在 src/asset.ts 里，
+//      不能再走文件路径 —— kbone 会把 <img> 的绝对路径补成 origin 网络地址，见 asset.ts 注释）
 const fs = require('fs')
 const path = require('path')
 
@@ -43,15 +44,8 @@ for (const name of ['miniprogram-render', 'miniprogram-element']) {
   copyDir(distDir, path.join(npmDir, name))
 }
 
-// ── 2. 品牌 logo ──
-const logoSource = path.join(root, '..', 'frontend', 'public', 'apple-touch-icon.png')
-if (fs.existsSync(logoSource)) {
-  const imagesDir = path.join(mpRoot, 'images')
-  fs.mkdirSync(imagesDir, { recursive: true })
-  fs.copyFileSync(logoSource, path.join(imagesDir, 'antiprint-logo.png'))
-} else {
-  console.warn(`没找到品牌 logo（${logoSource}），登录页页头会缺图`)
-}
+// ── 2. 清理老构建留下的文件 logo（现在内联在 src/asset.ts，见该文件注释）──
+fs.rmSync(path.join(mpRoot, 'images', 'antiprint-logo.png'), { force: true })
 
 // ── 3. 内联 app.wxss（去掉 @import）──
 const appWxssPath = path.join(mpRoot, 'app.wxss')
@@ -100,4 +94,4 @@ if (fs.existsSync(commonDir)) {
   }
 }
 
-console.log('构建后处理完成：miniprogram_npm 运行时 + images/logo + app.wxss 内联样式')
+console.log('构建后处理完成：miniprogram_npm 运行时 + app.wxss 内联样式（logo 已内联在 src/asset.ts）')

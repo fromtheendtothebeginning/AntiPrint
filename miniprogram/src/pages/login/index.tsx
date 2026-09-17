@@ -1,6 +1,6 @@
 // 登录页：账号密码登录 / 注册（anticraft 跳转授权在小程序里走不通，这里只做本机账号）
 import * as React from 'react'
-import api, { SERVER } from '../../api'
+import api from '../../api'
 import { Alert, Btn, Card, Field, PageHeader, Segmented } from '../../components'
 import { createPage, go } from '../../page'
 import { friendlyError } from '../../util'
@@ -95,11 +95,6 @@ function LoginPage() {
               {busy ? '请稍候…' : mode === 'login' ? '登录' : '注册并登录'}
             </Btn>
           </div>
-        </Card>
-
-        <Card title="服务器">
-          <div className="text ellipsis">{SERVER}</div>
-          <div className="field-hint">地址固定指向线上站点，无需（也不能）修改。</div>
         </Card>
       </div>
     </div>

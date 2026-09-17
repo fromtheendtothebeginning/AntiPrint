@@ -3,7 +3,7 @@ import * as React from 'react'
 import api from '../../api'
 import { Alert, Badge, Btn, Card, Empty, PageHeader, Row, Steps } from '../../components'
 import { createPage, go } from '../../page'
-import { canWithdraw, confirm, deliveryText, formatTime, jobSteps, onRefresh, shortTime, toast, toastError } from '../../util'
+import { canWithdraw, confirm, deliveryText, formatTime, jobSteps, onRefresh, shortTime, toast, toastError, withLoading } from '../../util'
 import {
   STATUS_AWAIT_DELIVERY,
   STATUS_AWAIT_PICKUP,
@@ -63,14 +63,7 @@ function MyJobsPage() {
   const preview = async (job: Job, fileId: number) => {
     const file = job.files.find((item) => item.id === fileId)
     if (!file) return
-    wx.showLoading({ title: '正在打开…', mask: true })
-    try {
-      await api.openJobFile(job.id, file)
-    } catch (err) {
-      toastError(err)
-    } finally {
-      wx.hideLoading()
-    }
+    await withLoading('正在打开…', () => api.openJobFile(job.id, file))
   }
 
   const renderJob = (job: Job) => {
@@ -91,13 +84,11 @@ function MyJobsPage() {
 
         {job.files.map((file) => (
           <div className="file-item" key={file.id}>
+            {/* 点文件名预览（2026-09-17 按用户要求去掉右侧的「预览文件」按钮） */}
             <div className="grow" onClick={() => preview(job, file.id)}>
               <div className="file-name ellipsis">{file.filename}</div>
               <div className="muted">{describePrintOptions(file.print_options, job.copies)}</div>
             </div>
-            <Btn kind="ghost" size="sm" onClick={() => preview(job, file.id)}>
-              预览文件
-            </Btn>
           </div>
         ))}
 

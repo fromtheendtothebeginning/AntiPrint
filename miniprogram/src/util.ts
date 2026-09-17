@@ -132,6 +132,23 @@ export function toastError(error: unknown): void {
   wx.showToast({ title: message, icon: 'none', duration: 2500 })
 }
 
+/**
+ * 带「正在打开…」这类 loading 的操作：**先收 loading 再弹提示**。
+ * 微信里 showToast 会顶掉 showLoading，之后再调 hideLoading 会报
+ * 「请注意 showLoading 与 hideLoading 必须配对使用」（2026-09-17 开发者工具里点任务文件预览失败时实测刷屏）。
+ */
+export async function withLoading(title: string, task: () => Promise<void>): Promise<void> {
+  wx.showLoading({ title, mask: true })
+  try {
+    await task()
+  } catch (error) {
+    wx.hideLoading()
+    toastError(error)
+    return
+  }
+  wx.hideLoading()
+}
+
 /** 二次确认弹窗（Promise 化，和 web 端 Modal 确认的用法对齐） */
 export function confirm(title: string, content: string, confirmText = '确定'): Promise<boolean> {
   return new Promise((resolve) => {
@@ -155,20 +172,6 @@ export function onRefresh(fn: (() => void) | null): void {
 export function triggerRefresh(): void {
   if (refreshHandler) refreshHandler()
   else wx.stopPullDownRefresh()
-}
-
-// ── 界面字号缩放（「我的配置」里可选 标准/大/特大）：存在本地，进每个页面时套用 ──
-export type UiScale = 'std' | 'lg' | 'xl'
-
-const SCALE_KEY = 'antiprint_scale'
-
-export function getUiScale(): UiScale {
-  const saved = wx.getStorageSync(SCALE_KEY)
-  return saved === 'lg' || saved === 'xl' ? saved : 'std'
-}
-
-export function setUiScale(scale: UiScale): void {
-  wx.setStorageSync(SCALE_KEY, scale)
 }
 
 // ── 页面重新显示（wxshow）：tabBar 页用 switchTab 切换时**不会销毁页面实例**，
