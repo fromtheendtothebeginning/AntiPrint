@@ -1,0 +1,5 @@
+# AntiPrint 虚拟打印机依赖（tkinter 属于 Python 标准库，不用装）
+# Linux 上如果 import tkinter 失败：sudo apt install python3-tk
+requests>=2.31
+pystray>=0.19
+Pillow>=10.0

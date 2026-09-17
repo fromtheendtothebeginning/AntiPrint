@@ -1,0 +1,24 @@
+AntiPrint 虚拟打印机 · 快速开始（不需要装 Python）
+====================================================
+
+Windows
+-------
+1. 双击「AntiPrintVPrinter.exe」——右下角出现托盘图标，配置界面自动弹出
+2. 填账号密码（服务器地址已默认填好）→ 点「测试连接」
+3. 点「一键安装打印机队列」→ 弹出管理员授权窗口时点「是」
+
+macOS / Linux
+-------------
+1. 先装打印队列：sudo bash install/setup-cups.sh
+2. 启动：bash start-vprinter.sh（或直接运行 AntiPrintVPrinter）
+3. 托盘菜单里打开配置界面，填账号密码、点「测试连接」
+
+然后
+----
+在任意程序里按 Ctrl+P（macOS 是 Cmd+P），选「AntiPrint-1.0.0」这台打印机打印，
+内容会自动变成 PDF 并提交到网站，等管理员审核后由打印代理出纸。
+
+* 检查是否正常：双击 check-vprinter.bat（macOS/Linux 跑 bash check-vprinter.sh）
+* 数据都在程序旁边那个 AntiPrintVPrinter-data\ 文件夹里，删掉文件夹就没痕迹了
+* 详细说明、常见问题见 README.txt
+* 第一次运行若弹出「Windows 已保护你的电脑」：点「更多信息 → 仍要运行」（未签名的程序都会这样）

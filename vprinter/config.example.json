@@ -1,0 +1,18 @@
+{
+  "server": "https://print.anticraft.top",
+  "auth_mode": "local",
+  "username": "在网站注册的账号（或用 anticraft 账号，把 auth_mode 改成 anticraft）",
+  "password": "账号密码",
+  "delivery_mode": "",
+  "address": "",
+  "note": "虚拟打印机提交",
+  "copies": 1,
+  "printer_name": "ANTIPRINT",
+  "watch_dirs": [],
+  "paused": false,
+  "autostart": false,
+  "notify_popup": false,
+  "token": "",
+  "token_at": 0.0,
+  "token_user": ""
+}

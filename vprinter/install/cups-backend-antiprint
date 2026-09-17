@@ -1,0 +1,77 @@
+#!/bin/sh
+# AntiPrint CUPS backend (macOS / Linux).
+#
+# CUPS hands every print job to this program; we simply drop the data into the spool folder
+# and exit successfully - the desktop side (virtual_printer.py) turns it into a PDF and
+# submits it to the AntiPrint website. Install it with setup-cups.sh, do not call it by hand
+# (except for testing, see below).
+#
+# CUPS calling convention:
+#   $1 job-id   $2 user   $3 job title   $4 copies   $5 options   $6 data file (may be absent
+#   when the data arrives on stdin)
+#   No arguments at all = CUPS probing for available devices, print a device line and exit.
+#
+# Manual test (writes one job into the spool folder):
+#   ANTIPRINT_SPOOL=/tmp/antiprint-test sh cups-backend-antiprint 1 "$USER" "测试文档" 1 "" /path/to/test.pdf
+#
+# The spool folder is world writable on purpose: the backend runs as root/lp while the tray
+# app runs as the desktop user and has to move the job files away (a sticky bit would forbid
+# that). Change ANTIPRINT_SPOOL to a private folder if you mind other local users reading it.
+
+set -u
+
+SPOOL="${ANTIPRINT_SPOOL:-/var/spool/antiprint}"
+
+# ---- device probe -------------------------------------------------------------------
+if [ "$#" -eq 0 ]; then
+  echo 'direct antiprint:/ "AntiPrint virtual printer (PDF -> website)" "MFG:AntiPrint;MDL:ANTIPRINT;"'
+  exit 0
+fi
+
+job="${1:-0}"
+user="${2:-unknown}"
+title="${3:-}"
+copies="${4:-1}"
+options="${5:-}"
+data="${6:-}"
+
+[ -d "$SPOOL" ] || mkdir -p "$SPOOL" 2>/dev/null
+[ -d "$SPOOL" ] || exit 1
+
+stamp=$(date +%Y%m%d-%H%M%S)
+rand=$(od -An -N2 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')
+[ -n "$rand" ] || rand="$$"
+tmp="$SPOOL/.job-$stamp-$rand.part"
+
+# ---- collect the data ---------------------------------------------------------------
+if [ -n "$data" ] && [ -f "$data" ]; then
+  cp "$data" "$tmp" 2>/dev/null || cat "$data" > "$tmp" || exit 1
+else
+  cat > "$tmp" || exit 1
+fi
+
+# ---- pick the extension from the magic bytes ---------------------------------------
+magic=$(dd if="$tmp" bs=4 count=1 2>/dev/null | tr -d '\000')
+case "$magic" in
+  %PDF) ext=pdf ;;
+  %!PS) ext=ps ;;
+  *) ext=bin ;;
+esac
+out="$SPOOL/job-$stamp-$rand.$ext"
+mv "$tmp" "$out" || exit 1           # atomic rename: the daemon never sees a half file
+chmod 0644 "$out" 2>/dev/null
+
+# ---- sidecar metadata (the daemon names the uploaded file after the job title) ------
+# 文件名约定：数据文件 job-xxx.pdf → 边车 job-xxx.json（同名，换扩展名），守护进程按这个找。
+clean_title=$(printf '%s' "$title" | tr '\n\r\t' '   ')
+sidecar="${out%.*}.json"
+{
+  printf 'title=%s\n' "$clean_title"
+  printf 'user=%s\n' "$user"
+  printf 'copies=%s\n' "$copies"
+  printf 'job_id=%s\n' "$job"
+} > "$sidecar" 2>/dev/null
+chmod 0644 "$sidecar" 2>/dev/null
+
+logger -t antiprint "job $job from $user -> $out ($ext, copies=$copies, options=$options)" 2>/dev/null
+exit 0
