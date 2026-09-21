@@ -772,6 +772,7 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
 - 服务已在 127.0.0.1:8301 上；**提交任务失败时先查 `uploads/` 是否有库里不存在的残留目录**（`ls uploads | sort -n` 对比 `SELECT id FROM print_jobs`），`main.py` 现在遇到同名残留会先清理再落盘并在日志里警告。
 - 服务器已占用端口参考：index 8000、antiClass 8100、GEOMind 18000、AntiPrint 8301；nginx 站点配置目录既有 `anticlass`、`anticlass-domain`、`anticraft` 三份。
 - **部署红线（硬性）**：未经用户明确同意，禁止运行任何部署脚本或发布到服务器；**代理不得读取、展示或上传 `deploy*.bat` 等脚本中的任何凭据**——凭据只由用户本人使用。功能完成后只启动本地服务供验收，等用户说「发布到服务器并 git」再部署。
+- **不在服务器上做测试（硬性，2026-09-21 用户要求）**：线上只做**只读探测** —— `/api/health`、首页/资源文本与 sha256 核对、未登录接口应当 401 这类**不落数据**的请求；**不准**在服务器上跑测试脚本，也不准拿线上当联调环境建测试账号/任务/文件（线上全是真用户数据，且出纸不可逆）。功能验证一律在本机（8301 + `.tmp-test/` 那套用例）；**确需写线上数据必须先取得用户同意**，并且提交/注册类探测一律先想清楚能不能改成只读。
 - 兄弟项目做法：部署脚本含凭据、已 gitignore、仅本机存在（参考 `index/deploy.bat` 家族）；**不要提交任何含凭据的文件**（`deploy/nginx-antiprint.conf` 只含反代配置，无凭据）。
 
 ## 已知未定义（实现前须与用户确认，勿臆测）
@@ -812,7 +813,7 @@ setup.bat / run.bat / stop.bat / stop.ps1     一键安装 / 启动 / 停止（b
 7. **计费**：`backend\.venv\Scripts\python.exe .tmp-test/billing_test.py`（35 项）+ `node .tmp-test/ui-test20.mjs`（12 项）全绿；
    动过张数/扣费逻辑后，另跑 `e2e.py` 与 `ui-test13/16/19.mjs` 确认老用例没被 402 拦住（测试账号要先充值）；
 8. **代理断开/重连**：`backend\.venv\Scripts\python.exe .tmp-test/agent_link_test.py` + `node .tmp-test/ui-test18.mjs` 全绿；**跑完必须确认 `settings.agent_enabled` 已回到 `1`**（用例收尾会断言，别把本机留在「已断开」——那样后续 e2e 的代理会全 403）；
-9. **Office（Word/PPT）**：`backend\.venv\Scripts\python.exe .tmp-test\office_convert_test.py`（34 项）+ `node .tmp-test\ui-test17.mjs`（13 项）全绿；**动过转换链路或换/重装服务器后**，另跑线上冒烟 `PROD_ADMIN_PW=... backend\.venv\Scripts\python.exe .tmp-test\prod_office_check.py`（提交 docx → 预览是 PDF → 删除任务，**不审批所以不会出纸**）。
+9. **Office（Word/PPT）**：`backend\.venv\Scripts\python.exe .tmp-test\office_convert_test.py`（34 项）+ `node .tmp-test\ui-test17.mjs`（13 项）全绿。**动过转换链路或换/重装服务器后**的线上确认按「不在服务器上做测试」只做只读核对（`/api/health`、首页/bundle 文本）；`prod_office_check.py` 那种「在线上提交 docx 再删任务」的冒烟**要先问用户**，默认不跑。
 10. **虚拟打印机**：`backend\.venv\Scripts\python.exe .tmp-test\vprinter_test.py`（163 项；开头等 61 秒腾清登录限速窗口、收尾删掉自己建的测试任务）全绿；
     动过托盘/配置界面还可以跑 `powershell -File .tmp-test\tray_check.ps1`（列通知栏图标与窗口标题）与 `tray_flyout_check.ps1`（点开溢出层找 AntiPrint）；
     **改了 Windows 建队列脚本**则跑 `powershell -ExecutionPolicy Bypass -File vprinter\install\install-printer-windows.ps1 -DryRun`（不改系统）。
