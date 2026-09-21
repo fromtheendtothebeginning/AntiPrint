@@ -264,7 +264,6 @@ function LoginPage({ onLogin }: LoginPageProps) {
           </button>
         </form>
 
-        {tab === 'login' && <p className="mt-5 text-center text-xs text-gray-400">管理员默认账号：admin / admin123</p>}
         {tab === 'register' && (
           <p className="mt-5 text-center text-xs text-gray-400">注册后自动登录；提交的任务需管理员审核通过后才会打印</p>
         )}
