@@ -16,6 +16,7 @@ import json
 import logging
 import os
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 
 import config
 
@@ -54,7 +55,9 @@ def load_config() -> dict:
         "mock": _truthy(raw.get("mock", False)),
         "app_id": str(raw.get("app_id") or "").strip(),
         "private_key": str(raw.get("private_key") or "").strip(),
+        "private_key_path": str(raw.get("private_key_path") or "").strip(),
         "alipay_public_key": str(raw.get("alipay_public_key") or "").strip(),
+        "public_key_path": str(raw.get("public_key_path") or "").strip(),
         "gateway": str(raw.get("gateway") or DEFAULT_GATEWAY).strip(),
         "notify_url": str(raw.get("notify_url") or DEFAULT_NOTIFY_URL).strip(),
         "return_url": str(raw.get("return_url") or DEFAULT_RETURN_URL).strip(),
@@ -66,7 +69,9 @@ def load_config() -> dict:
     for key, env in (
         ("app_id", "ALIPAY_APP_ID"),
         ("private_key", "ALIPAY_PRIVATE_KEY"),
+        ("private_key_path", "ALIPAY_PRIVATE_KEY_PATH"),
         ("alipay_public_key", "ALIPAY_PUBLIC_KEY"),
+        ("public_key_path", "ALIPAY_PUBLIC_KEY_PATH"),
         ("gateway", "ALIPAY_GATEWAY"),
         ("notify_url", "ALIPAY_NOTIFY_URL"),
         ("return_url", "ALIPAY_RETURN_URL"),
@@ -84,7 +89,27 @@ def is_enabled() -> bool:
     cfg = load_config()
     if cfg["mock"]:
         return True
-    return bool(cfg["enabled"] and cfg["app_id"] and cfg["private_key"] and cfg["alipay_public_key"])
+    has_private = bool(cfg["private_key"] or cfg["private_key_path"])
+    has_public = bool(cfg["alipay_public_key"] or cfg["public_key_path"])
+    return bool(cfg["enabled"] and cfg["app_id"] and has_private and has_public)
+
+
+def _read_key_file(path: str) -> str:
+    if not path:
+        return ""
+    try:
+        return Path(path).read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        LOG.warning("读取密钥文件失败 %s：%s", path, exc)
+        return ""
+
+
+def _private_key_raw(cfg: dict) -> str:
+    return cfg["private_key"] or _read_key_file(cfg["private_key_path"])
+
+
+def _public_key_raw(cfg: dict) -> str:
+    return cfg["alipay_public_key"] or _read_key_file(cfg["public_key_path"])
 
 
 def public_config() -> dict:
@@ -143,8 +168,8 @@ def _client(cfg: dict):
     client_config = AlipayClientConfig()
     client_config.server_url = cfg["gateway"]
     client_config.app_id = cfg["app_id"]
-    client_config.app_private_key = _private_key_pem(cfg["private_key"])
-    client_config.alipay_public_key = _public_key_pem(cfg["alipay_public_key"])
+    client_config.app_private_key = _private_key_pem(_private_key_raw(cfg))
+    client_config.alipay_public_key = _public_key_pem(_public_key_raw(cfg))
     client_config.sign_type = "RSA2"
     client_config.charset = "utf-8"
     return DefaultAlipayClient(client_config)
@@ -190,7 +215,7 @@ def verify_notify(params: dict) -> dict | None:
         from Crypto.PublicKey import RSA
         from Crypto.Signature import pkcs1_15
 
-        public_key = RSA.import_key(_public_key_pem(cfg["alipay_public_key"]))
+        public_key = RSA.import_key(_public_key_pem(_public_key_raw(cfg)))
         pkcs1_15.new(public_key).verify(SHA256.new(content.encode("utf-8")), base64.b64decode(sign))
     except (ValueError, TypeError, KeyError) as exc:
         LOG.warning("支付宝通知验签失败：%s", exc)
