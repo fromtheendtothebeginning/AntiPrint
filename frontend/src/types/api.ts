@@ -110,8 +110,34 @@ export interface BalanceInfo {
   free_reason: string
   price: string
   logs: BalanceLog[]
-  /** 付款码/充值是否已开放（当前一律 false = 暂未实现） */
+  /** 充值是否已开放（支付宝已配置或本地 mock 模式） */
   recharge_enabled: boolean
+  /** 快捷充值档位（元） */
+  recharge_amounts: number[]
+  /** 可用支付渠道 */
+  pay_channels: string[]
+}
+
+/** 充值订单 */
+export interface PaymentOrder {
+  id: number
+  out_trade_no: string
+  user_id: number
+  amount: number | string
+  channel: string
+  status: 'pending' | 'paid' | 'closed' | 'failed' | string
+  provider_txn_id: string | null
+  paid_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+/** 创建充值订单的返回 */
+export interface RechargeResult {
+  out_trade_no: string
+  amount: string
+  pay_url: string
+  mock: boolean
 }
 
 export interface Agent {

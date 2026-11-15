@@ -11,6 +11,7 @@ dist/
 # 本机配置与数据（含凭据，禁止提交）
 backend/.env
 backend/db_config.json
+backend/payment_config.json
 backend/data/
 backend/log/
 agent/config.json

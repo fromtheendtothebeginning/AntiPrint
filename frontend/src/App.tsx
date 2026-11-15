@@ -57,7 +57,7 @@ const PAGE_META: Record<string, { title: string; subtitle: string }> = {
   '/mine': { title: '我的任务', subtitle: '查看自己提交的打印任务与审核、打印、交接进度' },
   '/vprinter': { title: '虚拟打印机', subtitle: '下载桌面客户端：在任意软件里 Ctrl+P 选「AntiPrint-1.0.0」就等于提交打印任务' },
   '/apidocs': { title: 'API 文档', subtitle: '打印 API 的参数、错误码与 Python 示例（管理员可直接在页面上编辑）' },
-  '/balance': { title: '我的余额', subtitle: '账户余额、单价与打印扣费 / 退费记录（充值暂未开放）' },
+  '/balance': { title: '我的余额', subtitle: '账户余额、单价与打印扣费 / 退费记录，支持支付宝充值' },
   '/profile': { title: '我的配置', subtitle: '默认配送地址与配送方式，以及 anticraft 账号绑定' },
   '/queue': { title: '任务队列', subtitle: '审核打印任务，并在出纸后勾选待配送 / 待取件与完成' },
   '/admin': { title: '管理设置', subtitle: '按二级菜单分栏：打印设置 / 打印计费 / 免费白名单 / 管理员名单 / anticraft 绑定 / 打印代理' },

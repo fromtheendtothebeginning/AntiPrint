@@ -25,7 +25,7 @@ import pymysql
 import uvicorn
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -39,6 +39,7 @@ import convert
 import db
 import api_docs
 import downloads
+import payments
 import agent_api
 from agent_api import router as agent_router
 
@@ -499,15 +500,142 @@ class RoleBody(BaseModel):
 def get_balance(user: dict = Depends(auth.get_current_user)):
     """我的余额页：余额、是否计费、为什么免费、单价与最近流水"""
     row = db.get_user_by_id(user["id"]) or {}
+    billable = not billing.is_free(row)
     return {
         "balance": row.get("balance") or 0,
-        "billable": not billing.is_free(row),
+        "billable": billable,
         "free_reason": billing.free_reason(row),
         "price": billing.price_text(),
         "logs": db.list_balance_logs(user["id"], 50),
-        # 付款码暂未实现：前端据此显示「充值暂未开放」占位
-        "recharge_enabled": False,
+        # 免费账号不需要充值；付费账号按支付宝配置决定是否显示充值入口
+        "recharge_enabled": billable and payments.is_enabled(),
+        "recharge_amounts": payments.RECHARGE_AMOUNTS,
+        "pay_channels": ["alipay"],
     }
+
+
+# ── 充值（支付宝电脑网站支付）──
+
+class RechargeBody(BaseModel):
+    amount: str = ""
+
+
+@app.get("/api/pay/config")
+def pay_config():
+    """公开的支付配置：前端据此决定是否显示充值入口（不含密钥）。"""
+    return payments.public_config()
+
+
+@app.post("/api/pay/recharge")
+def create_recharge(body: RechargeBody, user: dict = Depends(auth.get_current_user)):
+    """创建充值订单并返回支付宝收银台地址（mock 模式返回本地模拟页）。"""
+    if not payments.is_enabled():
+        raise HTTPException(status_code=503, detail="充值暂未开放")
+    try:
+        amount = payments.validate_amount(body.amount)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    order = db.create_payment_order(user["id"], amount, "alipay")
+    try:
+        result = payments.create_pay(order)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    logger.info("用户 %s 创建充值订单 %s：%s 元", user["username"], order["out_trade_no"], amount)
+    return {
+        "out_trade_no": order["out_trade_no"],
+        "amount": f"{amount:.2f}",
+        "pay_url": result["pay_url"],
+        "mock": result["mock"],
+    }
+
+
+@app.get("/api/pay/orders")
+def list_payment_orders(user: dict = Depends(auth.require_admin)):
+    """管理员查看充值订单（对账用）。"""
+    return {"orders": db.list_payment_orders(None, 100)}
+
+
+@app.get("/api/pay/orders/{out_trade_no}")
+def get_payment_order(out_trade_no: str, user: dict = Depends(auth.get_current_user)):
+    """查询充值订单状态；pending 时主动向支付宝查单，回调丢失也能入账。"""
+    order = db.get_payment_order(out_trade_no)
+    if not order:
+        raise HTTPException(status_code=404, detail="充值订单不存在")
+    if order["user_id"] != user["id"] and user["role"] not in ("admin", "root"):
+        raise HTTPException(status_code=403, detail="无权查看该订单")
+
+    if order["status"] == "pending" and not payments.is_mock():
+        trade = payments.query_trade(out_trade_no)
+        if trade and trade.get("trade_status") in payments.TRADE_SUCCESS:
+            try:
+                notified = Decimal(str(trade.get("total_amount") or 0))
+            except Exception:
+                notified = Decimal("0")
+            if notified == Decimal(str(order["amount"])):
+                db.mark_payment_paid(out_trade_no, trade.get("trade_no"))
+                order = db.get_payment_order(out_trade_no) or order
+            else:
+                logger.warning("支付宝查单金额不一致 %s：订单 %s，支付宝 %s", out_trade_no, order["amount"], notified)
+
+    return {
+        "order": order,
+        "balance": str(db.get_balance(order["user_id"])),
+    }
+
+
+@app.post("/api/pay/notify/alipay")
+async def alipay_notify(request: Request):
+    """支付宝异步通知：验签 → 核对金额 → 幂等入账。"""
+    form = await request.form()
+    params = {key: str(value) for key, value in form.items()}
+    data = payments.verify_notify(params)
+    if not data:
+        return PlainTextResponse("failure", status_code=400)
+
+    out_trade_no = params.get("out_trade_no") or ""
+    order = db.get_payment_order(out_trade_no)
+    if not order:
+        logger.warning("支付宝通知的订单不存在：%s", out_trade_no)
+        return PlainTextResponse("failure", status_code=400)
+
+    status = params.get("trade_status")
+    if status in payments.TRADE_SUCCESS:
+        try:
+            notified = Decimal(str(params.get("total_amount") or 0)).quantize(Decimal("0.01"))
+        except Exception:
+            notified = Decimal("0")
+        if notified != Decimal(str(order["amount"])):
+            logger.warning("支付宝通知金额不一致 %s：订单 %s，通知 %s", out_trade_no, order["amount"], notified)
+            return PlainTextResponse("failure", status_code=400)
+        db.mark_payment_paid(out_trade_no, params.get("trade_no"))
+        logger.info("支付宝充值到账：%s（%s 元）", out_trade_no, order["amount"])
+    elif status == "TRADE_CLOSED":
+        db.close_payment_order(out_trade_no)
+        logger.info("支付宝订单已关闭：%s", out_trade_no)
+
+    # 其余状态（如 WAIT_BUYER_PAY）也回 success，避免支付宝无意义重试
+    return PlainTextResponse("success")
+
+
+@app.get("/api/pay/return/alipay")
+def alipay_return(out_trade_no: str = ""):
+    """支付宝同步跳转：只做展示，支付结果以异步通知/查单为准。"""
+    return RedirectResponse(
+        url=f"/balance?pay=return&out_trade_no={quote(out_trade_no)}",
+        status_code=302,
+    )
+
+
+@app.get("/api/pay/mock/{out_trade_no}")
+def mock_pay(out_trade_no: str):
+    """本地 mock 支付：仅在 PAYMENT_MOCK=1 时可用，直接标记订单已支付。"""
+    if not payments.is_mock():
+        raise HTTPException(status_code=404, detail="Not Found")
+    order = db.get_payment_order(out_trade_no)
+    if not order:
+        raise HTTPException(status_code=404, detail="充值订单不存在")
+    db.mark_payment_paid(out_trade_no, "MOCK")
+    return RedirectResponse(url=f"/balance?pay=success&out_trade_no={quote(out_trade_no)}", status_code=302)
 
 
 AVATAR_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp")

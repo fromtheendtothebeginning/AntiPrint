@@ -9,7 +9,9 @@ import type {
   DownloadPackage,
   Job,
   JobStatus,
+  PaymentOrder,
   Profile,
+  RechargeResult,
   Settings,
   User,
 } from './types/api'
@@ -403,6 +405,18 @@ export const api = {
   /** 我的余额（含最近的扣费/退费流水） */
   async getBalance(): Promise<BalanceInfo> {
     return request<BalanceInfo>('/api/balance')
+  },
+
+  /** 创建充值订单，返回支付宝收银台地址（mock 模式返回本地模拟页） */
+  async createRecharge(amount: string): Promise<RechargeResult> {
+    return request<RechargeResult>('/api/pay/recharge', { method: 'POST', body: { amount } })
+  },
+
+  /** 查询充值订单状态（支付成功后后端会入账） */
+  async getPaymentOrder(outTradeNo: string): Promise<{ order: PaymentOrder; balance: string }> {
+    return request<{ order: PaymentOrder; balance: string }>(
+      `/api/pay/orders/${encodeURIComponent(outTradeNo)}`,
+    )
   },
 
   /** root 删除账号（余额必须为 0；任务与流水保留） */

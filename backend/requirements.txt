@@ -4,3 +4,4 @@ pymysql
 bcrypt
 pyjwt
 python-multipart
+alipay-sdk-python

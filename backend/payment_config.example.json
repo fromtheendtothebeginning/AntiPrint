@@ -1,0 +1,10 @@
+{
+  "enabled": false,
+  "mock": false,
+  "app_id": "",
+  "private_key": "",
+  "alipay_public_key": "",
+  "gateway": "https://openapi.alipay.com/gateway.do",
+  "notify_url": "https://print.anticraft.top/api/pay/notify/alipay",
+  "return_url": "https://print.anticraft.top/balance"
+}

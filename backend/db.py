@@ -92,6 +92,20 @@ TABLES = {
         ("actor", "VARCHAR(64) NULL"),                  # 管理员调账时记是谁操作的
         ("created_at", "DATETIME NOT NULL"),
     ],
+    # 充值订单：支付宝电脑网站支付下单后写一条；回调/主动查单确认后入账。
+    # status: pending（待支付）/ paid（已支付并入账）/ closed（超时关闭）/ failed（支付失败）
+    "payment_orders": [
+        ("id", "INT AUTO_INCREMENT PRIMARY KEY"),
+        ("out_trade_no", "VARCHAR(64) NOT NULL UNIQUE"),
+        ("user_id", "INT NOT NULL"),
+        ("amount", "DECIMAL(10,2) NOT NULL"),
+        ("channel", "VARCHAR(16) NOT NULL DEFAULT 'alipay'"),
+        ("status", "VARCHAR(16) NOT NULL DEFAULT 'pending'"),
+        ("provider_txn_id", "VARCHAR(64) NULL"),
+        ("paid_at", "DATETIME NULL"),
+        ("created_at", "DATETIME NOT NULL"),
+        ("updated_at", "DATETIME NOT NULL"),
+    ],
     "settings": [
         ("k", "VARCHAR(64) PRIMARY KEY"),
         ("v", "TEXT"),
@@ -109,6 +123,10 @@ JOB_FIELDS = (
 )
 FILE_FIELDS = ("id", "job_id", "filename", "stored_name", "size", "sha256", "print_options", "created_at")
 AGENT_FIELDS = ("id", "name", "version", "printers", "launcher", "last_seen", "created_at")
+PAYMENT_FIELDS = (
+    "id", "out_trade_no", "user_id", "amount", "channel", "status",
+    "provider_txn_id", "paid_at", "created_at", "updated_at",
+)
 
 # settings 缺失键的默认值（agent_token 单独处理：必须落库，否则每次重启都会变）
 SETTINGS_DEFAULTS = {
@@ -496,6 +514,104 @@ def list_balance_logs(user_id=None, limit=50):
                 (user_id, int(limit)),
             )
         return [_plain(dict(row)) for row in cur.fetchall()]
+
+
+# ── 充值订单（支付宝）──
+
+def create_payment_order(user_id, amount, channel="alipay"):
+    """创建一条待支付订单，返回订单 dict（含 out_trade_no）。"""
+    amount = Decimal(str(amount)).quantize(Decimal("0.01"))
+    out_trade_no = "AP" + datetime.now().strftime("%Y%m%d%H%M%S") + secrets.token_hex(4).upper()
+    with tx() as cur:
+        cur.execute(
+            "INSERT INTO payment_orders (out_trade_no, user_id, amount, channel, status, created_at, updated_at) "
+            "VALUES (%s,%s,%s,%s,'pending',NOW(),NOW())",
+            (out_trade_no, user_id, amount, channel),
+        )
+        order_id = cur.lastrowid
+    return get_payment_order_by_id(order_id)
+
+
+def get_payment_order(out_trade_no):
+    with tx() as cur:
+        cur.execute("SELECT * FROM payment_orders WHERE out_trade_no=%s", (out_trade_no,))
+        row = cur.fetchone()
+    return _row(row, PAYMENT_FIELDS) if row else None
+
+
+def get_payment_order_by_id(order_id):
+    with tx() as cur:
+        cur.execute("SELECT * FROM payment_orders WHERE id=%s", (order_id,))
+        row = cur.fetchone()
+    return _row(row, PAYMENT_FIELDS) if row else None
+
+
+def mark_payment_paid(out_trade_no, provider_txn_id=None):
+    """把待支付订单标记为已支付并给用户加余额（同一事务，幂等）。
+
+    返回 (order, balance_after, credited)：订单不存在返回 (None, None, False)；
+    已支付过则 credited=False（不重复加钱）；已关闭/失败返回 (None, None, False)。
+    """
+    with tx() as cur:
+        cur.execute("SELECT * FROM payment_orders WHERE out_trade_no=%s FOR UPDATE", (out_trade_no,))
+        row = cur.fetchone()
+        if not row:
+            return None, None, False
+        if row["status"] == "paid":
+            balance = _user_balance(cur, row["user_id"])
+            return _row(row, PAYMENT_FIELDS), balance, False
+        if row["status"] != "pending":
+            return None, None, False
+
+        amount = Decimal(str(row["amount"] or 0)).quantize(Decimal("0.01"))
+        cur.execute(
+            "UPDATE payment_orders SET status='paid', provider_txn_id=%s, paid_at=NOW(), updated_at=NOW() "
+            "WHERE id=%s",
+            ((provider_txn_id or None) and str(provider_txn_id)[:64], row["id"]),
+        )
+        cur.execute("UPDATE users SET balance = balance + %s WHERE id=%s", (amount, row["user_id"]))
+        balance_after = _user_balance(cur, row["user_id"])
+        cur.execute(
+            "INSERT INTO balance_logs (user_id, delta, balance_after, reason, job_id, actor, created_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,NOW())",
+            (row["user_id"], amount, balance_after, "支付宝充值", None, "alipay"),
+        )
+    return get_payment_order(out_trade_no), balance_after, True
+
+
+def close_payment_order(out_trade_no):
+    """关闭超时未支付订单（只允许 pending → closed）。"""
+    with tx() as cur:
+        cur.execute(
+            "UPDATE payment_orders SET status='closed', updated_at=NOW() "
+            "WHERE out_trade_no=%s AND status='pending'",
+            (out_trade_no,),
+        )
+        return cur.rowcount > 0
+
+
+def list_payment_orders(user_id=None, limit=50):
+    """充值订单（倒序）；user_id 为空返回全部（管理端对账用）。"""
+    with tx() as cur:
+        if user_id is None:
+            cur.execute(
+                "SELECT p.*, u.username FROM payment_orders p LEFT JOIN users u ON u.id=p.user_id "
+                "ORDER BY p.id DESC LIMIT %s",
+                (int(limit),),
+            )
+        else:
+            cur.execute(
+                "SELECT p.*, u.username FROM payment_orders p LEFT JOIN users u ON u.id=p.user_id "
+                "WHERE p.user_id=%s ORDER BY p.id DESC LIMIT %s",
+                (user_id, int(limit)),
+            )
+        return [_plain(dict(row)) for row in cur.fetchall()]
+
+
+def _user_balance(cur, user_id):
+    cur.execute("SELECT balance FROM users WHERE id=%s", (user_id,))
+    row = cur.fetchone()
+    return row["balance"] if row else Decimal("0")
 
 
 def list_jobs(user_id=None):
