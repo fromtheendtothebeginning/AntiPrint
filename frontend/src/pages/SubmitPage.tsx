@@ -302,6 +302,11 @@ function SubmitPage() {
           setCharged({ charge: instantOrder.amount, balance: info ? String(info.balance) : (bill?.balance ?? '0') })
           setCreatedPayMode('instant')
           setCreated(job)
+          setPicked([])
+          setSelectedIndex(0)
+          setAddress('')
+          setNote('')
+          setStep(1)
           setInstantOrder(null)
         } else if (order.status === 'closed' || order.status === 'failed') {
           setInstantOrder(null)
@@ -336,6 +341,11 @@ function SubmitPage() {
         setCharged({ charge: instantOrder.amount, balance: info ? String(info.balance) : '0' })
         setCreatedPayMode('instant')
         setCreated(job)
+        setPicked([])
+        setSelectedIndex(0)
+        setAddress('')
+        setNote('')
+        setStep(1)
         setInstantOrder(null)
       } else {
         setPayError('还没有查到到账，请完成支付后再试')
@@ -416,11 +426,6 @@ function SubmitPage() {
         } else {
           window.open(result.pay_url, '_blank', 'noopener,noreferrer')
         }
-        setPicked([])
-        setSelectedIndex(0)
-        setAddress('')
-        setNote('')
-        setStep(1)
         return
       }
       if (payWindow) payWindow.close()
