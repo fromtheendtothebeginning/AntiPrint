@@ -227,6 +227,32 @@ def verify_notify(params: dict) -> dict | None:
     return params
 
 
+def _execute(cfg: dict, request, response_key: str) -> dict:
+    """执行 OpenAPI 请求并返回业务节点 dict。
+
+    SDK 3.7 的 `execute()` 返回的是**已验签的响应 JSON 字符串**（不是 response 对象），
+    直接拿它做 getattr 判断会永远失败，这里统一解析成 dict 供调用方读 code/sub_msg。
+    """
+    raw = _client(cfg).execute(request)
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", "replace")
+    if isinstance(raw, str):
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            raise RuntimeError(f"支付宝返回内容无法解析：{raw[:200]}")
+    elif isinstance(raw, dict):
+        data = raw
+    else:
+        raise RuntimeError(f"支付宝返回内容格式异常：{str(raw)[:200]}")
+    node = data.get(response_key) if isinstance(data, dict) else None
+    if not isinstance(node, dict):
+        node = data if "code" in data else {}
+    if not node:
+        raise RuntimeError(f"支付宝返回内容缺少 {response_key}：{str(raw)[:200]}")
+    return node
+
+
 def query_trade(out_trade_no: str) -> dict | None:
     """主动查单（回调丢失时的兜底）；未配置或查询失败返回 None。"""
     cfg = load_config()
@@ -240,16 +266,20 @@ def query_trade(out_trade_no: str) -> dict | None:
     model.out_trade_no = out_trade_no
     request.biz_model = model
     try:
-        response = _client(cfg).execute(request)
+        node = _execute(cfg, request, "alipay_trade_query_response")
     except Exception as exc:      # SDK 的网络/解析异常不应影响页面轮询
         LOG.warning("支付宝查单失败 %s：%s", out_trade_no, exc)
         return None
-    if not getattr(response, "is_success", lambda: False)():
+    if node.get("code") != "10000":
+        LOG.info(
+            "支付宝查单未成功 %s：%s %s",
+            out_trade_no, node.get("sub_code") or node.get("code"), node.get("sub_msg") or node.get("msg"),
+        )
         return None
     return {
-        "trade_status": getattr(response, "trade_status", None),
-        "trade_no": getattr(response, "trade_no", None),
-        "total_amount": getattr(response, "total_amount", None),
+        "trade_status": node.get("trade_status"),
+        "trade_no": node.get("trade_no"),
+        "total_amount": node.get("total_amount"),
     }
 
 
@@ -271,13 +301,13 @@ def refund_trade(out_trade_no: str, amount, out_request_no: str | None = None) -
     model.refund_reason = "打印任务退款"
     request.biz_model = model
     try:
-        response = _client(cfg).execute(request)
+        node = _execute(cfg, request, "alipay_trade_refund_response")
     except Exception as exc:
         raise RuntimeError(f"支付宝退款请求失败：{exc}")
-    if not getattr(response, "is_success", lambda: False)():
-        message = getattr(response, "sub_msg", None) or getattr(response, "msg", None) or "支付宝退款失败"
+    if node.get("code") != "10000":
+        message = node.get("sub_msg") or node.get("msg") or "支付宝退款失败"
         raise RuntimeError(str(message))
     return {
-        "refund_fee": getattr(response, "refund_fee", None),
-        "fund_change": getattr(response, "fund_change", None),
+        "refund_fee": node.get("refund_fee"),
+        "fund_change": node.get("fund_change"),
     }
