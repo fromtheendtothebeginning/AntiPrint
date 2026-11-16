@@ -341,6 +341,7 @@ class SettingsBody(BaseModel):
     anticraft_origins: str | None = None
     anticraft_admin_users: str | None = None
     print_price: str | None = None
+    recharge_bonus_percent: str | int | None = None
     cover_page: str | int | bool | None = None
     free_users: str | None = None
 
@@ -1911,6 +1912,11 @@ def update_settings(body: SettingsBody, user: dict = Depends(auth.require_admin)
             updates["print_price"] = str(billing.parse_price(body.print_price))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
+    if body.recharge_bonus_percent is not None:
+        raw = str(body.recharge_bonus_percent).strip()
+        if not raw.isdigit() or not 0 <= int(raw) <= 200:
+            raise HTTPException(status_code=400, detail="充值赠送比例需为 0~200 的整数（百分比）")
+        updates["recharge_bonus_percent"] = str(int(raw))
     if body.free_users is not None:
         raw = str(body.free_users).replace("，", ",").replace("；", ",").replace(";", ",").replace(" ", "").strip(",")
         if len(raw) > 500:
