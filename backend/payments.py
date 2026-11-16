@@ -192,7 +192,7 @@ def create_pay(order: dict) -> dict:
     model = AlipayTradePagePayModel()
     model.out_trade_no = order["out_trade_no"]
     model.total_amount = f"{Decimal(str(order['amount'])):.2f}"
-    model.subject = "AntiPrint 余额充值"
+    model.subject = "AntiPrint 打印费" if order.get("purpose") == "job" else "AntiPrint 余额充值"
     model.product_code = "FAST_INSTANT_TRADE_PAY"
     model.timeout_express = "30m"
     request.biz_model = model
@@ -250,4 +250,34 @@ def query_trade(out_trade_no: str) -> dict | None:
         "trade_status": getattr(response, "trade_status", None),
         "trade_no": getattr(response, "trade_no", None),
         "total_amount": getattr(response, "total_amount", None),
+    }
+
+
+def refund_trade(out_trade_no: str, amount, out_request_no: str | None = None) -> dict:
+    """支付宝原路退款；失败抛 RuntimeError（中文原因）。mock 模式直接成功。"""
+    cfg = load_config()
+    if cfg["mock"]:
+        LOG.info("[MOCK] 支付宝退款 %s：%s 元", out_trade_no, amount)
+        return {"mock": True, "refund_fee": str(amount)}
+
+    from alipay.aop.api.domain.AlipayTradeRefundModel import AlipayTradeRefundModel
+    from alipay.aop.api.request.AlipayTradeRefundRequest import AlipayTradeRefundRequest
+
+    request = AlipayTradeRefundRequest()
+    model = AlipayTradeRefundModel()
+    model.out_trade_no = out_trade_no
+    model.refund_amount = f"{Decimal(str(amount)):.2f}"
+    model.out_request_no = (out_request_no or (out_trade_no + "R1"))[:64]
+    model.refund_reason = "打印任务退款"
+    request.biz_model = model
+    try:
+        response = _client(cfg).execute(request)
+    except Exception as exc:
+        raise RuntimeError(f"支付宝退款请求失败：{exc}")
+    if not getattr(response, "is_success", lambda: False)():
+        message = getattr(response, "sub_msg", None) or getattr(response, "msg", None) or "支付宝退款失败"
+        raise RuntimeError(str(message))
+    return {
+        "refund_fee": getattr(response, "refund_fee", None),
+        "fund_change": getattr(response, "fund_change", None),
     }

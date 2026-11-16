@@ -2,6 +2,7 @@
 # 约定：多步写操作一律走 tx() 事务；表结构以 TABLES 为唯一来源，建表与补列共用，避免旧库漏列。
 
 import json
+import logging
 import os
 import secrets
 from contextlib import contextmanager
@@ -12,7 +13,9 @@ import pymysql
 
 import auth
 import config
-from constants import DELIVER, S_APPROVED, S_FAILED, S_PENDING, S_PRINTED, S_PRINTING
+from constants import DELIVER, S_APPROVED, S_FAILED, S_PENDING, S_PRINTED, S_PRINTING, S_UNPAID
+
+LOG = logging.getLogger("antiprint.db")
 
 # ── 表结构（列名/类型/默认值严格固定）──
 # 建表与 run_migrations 共用同一份定义：CREATE TABLE IF NOT EXISTS 不会给已存在的表补列，
@@ -50,6 +53,10 @@ TABLES = {
         ("finished_at", "DATETIME NULL"),
         # 本单实际扣掉的金额（元，0 = 免费账号或已退费）：退费后清零，是「这单花了多少钱」的唯一凭据
         ("charge", "DECIMAL(10,2) NOT NULL DEFAULT 0"),
+        # 支付方式：balance = 余额扣费；alipay = 即时付款（支付宝）
+        ("pay_method", "VARCHAR(16) NOT NULL DEFAULT 'balance'"),
+        # 即时付款对应的 payment_orders.id（余额支付为空）
+        ("payment_order_id", "INT NULL"),
         ("created_at", "DATETIME NOT NULL"),
         ("updated_at", "DATETIME NOT NULL"),
     ],
@@ -99,9 +106,17 @@ TABLES = {
         ("out_trade_no", "VARCHAR(64) NOT NULL UNIQUE"),
         ("user_id", "INT NOT NULL"),
         ("amount", "DECIMAL(10,2) NOT NULL"),
+        # 订单用途：recharge = 余额充值；job = 打印任务即时付款
+        ("purpose", "VARCHAR(16) NOT NULL DEFAULT 'recharge'"),
+        ("job_id", "INT NULL"),
+        # 实际入账金额（充值含赠送；任务付款等于 amount）；老订单为空时按 amount 处理
+        ("credit_amount", "DECIMAL(10,2) NULL"),
         ("channel", "VARCHAR(16) NOT NULL DEFAULT 'alipay'"),
         ("status", "VARCHAR(16) NOT NULL DEFAULT 'pending'"),
         ("provider_txn_id", "VARCHAR(64) NULL"),
+        # 支付宝退款状态：'' = 未退款；refunded = 已退款；failed = 退款失败
+        ("refund_status", "VARCHAR(16) NOT NULL DEFAULT ''"),
+        ("refunded_at", "DATETIME NULL"),
         ("paid_at", "DATETIME NULL"),
         ("created_at", "DATETIME NOT NULL"),
         ("updated_at", "DATETIME NOT NULL"),
@@ -119,13 +134,14 @@ USER_FIELDS = (
 JOB_FIELDS = (
     "id", "user_id", "username", "status", "address", "note", "reject_reason", "print_error",
     "agent_id", "copies", "delivery_mode", "print_options", "claimed_at", "printed_at", "finished_at",
-    "charge", "created_at", "updated_at",
+    "charge", "pay_method", "payment_order_id", "created_at", "updated_at",
 )
 FILE_FIELDS = ("id", "job_id", "filename", "stored_name", "size", "sha256", "print_options", "created_at")
 AGENT_FIELDS = ("id", "name", "version", "printers", "launcher", "last_seen", "created_at")
 PAYMENT_FIELDS = (
-    "id", "out_trade_no", "user_id", "amount", "channel", "status",
-    "provider_txn_id", "paid_at", "created_at", "updated_at",
+    "id", "out_trade_no", "user_id", "amount", "purpose", "job_id", "credit_amount",
+    "channel", "status", "provider_txn_id", "refund_status", "refunded_at",
+    "paid_at", "created_at", "updated_at",
 )
 
 # settings 缺失键的默认值（agent_token 单独处理：必须落库，否则每次重启都会变）
@@ -138,7 +154,9 @@ SETTINGS_DEFAULTS = {
     # 此时代理的注册/心跳/领取/下载/回报一律 403（见 agent_api.require_agent），恢复后自动续上
     "agent_enabled": "1",
     # 每张（A4 纸）打印单价，元；计费账号提交任务时按 张数 × 单价 扣余额
-    "print_price": "0.1",
+    "print_price": "0.15",
+    # 充值赠送比例（百分比）：50 = 充 10 元到账 15 元；0 = 不赠送
+    "recharge_bonus_percent": "50",
     # 免费打印白名单（用户名，逗号分隔）：管理员/root、anticraft 账号、名单内账号不扣费
     "free_users": "",
     # 每次出纸前先打一张「任务信息页」（提交人/文件/地址/提交与打印时间），'1' = 打（默认）
@@ -377,21 +395,21 @@ class InsufficientBalance(RuntimeError):
         super().__init__(f"余额不足：需要 {needed} 元，当前 {balance} 元")
 
 
-def create_job(user_id, address, note, files, delivery_mode=DELIVER, copies=1, print_options=None, charge=0):
-    """创建打印任务：写 print_jobs + print_job_files + 一条建单日志；charge > 0 时**同一事务里扣余额**。
+def create_job(
+    user_id, address, note, files, delivery_mode=DELIVER, copies=1,
+    print_options=None, charge=0, status=S_PENDING, pay_method="balance", deduct=True,
+):
+    """创建打印任务：写 print_jobs + print_job_files + 一条建单日志。
 
-    files 为已落盘的元数据列表：[{filename, stored_name, size, sha256}, ...]
-    delivery_mode: 配送 / 取件（取件时 address 可为空串）
-    copies: 份数（同时写进 copies 列与 print_options，代理侧直接用 print_options 拼命令行）
-    print_options: 打印设置的 JSON 文本（双面/纸张/页面范围/每面页数/缩放），可为 None
-    charge: 本次扣费金额（元，Decimal 或数字）；余额不够抛 InsufficientBalance（事务回滚，不建单不扣钱）
-
-    扣款条件写在 UPDATE 的 WHERE 里（`balance >= charge`），并发提交也不会扣成负数。
+    pay_method='balance' 且 deduct=True 时，charge > 0 会在同一事务里扣余额；
+    pay_method='alipay'（即时付款）时由调用方传 deduct=False，不扣余额，任务先落「待支付」，
+    支付成功后再由支付回调改成「待审核」。
     """
     charge = Decimal(str(charge or 0)).quantize(Decimal("0.01"))
+    deduct = bool(deduct) and pay_method == "balance"
     with tx() as cur:
         balance_after = None
-        if charge > 0:
+        if charge > 0 and deduct:
             cur.execute(
                 "UPDATE users SET balance = balance - %s WHERE id=%s AND balance >= %s",
                 (charge, user_id, charge),
@@ -403,9 +421,9 @@ def create_job(user_id, address, note, files, delivery_mode=DELIVER, copies=1, p
             cur.execute("SELECT balance FROM users WHERE id=%s", (user_id,))
             balance_after = cur.fetchone()["balance"]
         cur.execute(
-            "INSERT INTO print_jobs (user_id, status, address, note, copies, delivery_mode, print_options, charge, created_at, updated_at) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())",
-            (user_id, S_PENDING, address, note or None, copies, delivery_mode, print_options, charge),
+            "INSERT INTO print_jobs (user_id, status, address, note, copies, delivery_mode, print_options, charge, pay_method, created_at, updated_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())",
+            (user_id, status, address, note or None, copies, delivery_mode, print_options, charge, pay_method),
         )
         job_id = cur.lastrowid
         for item in files:
@@ -423,9 +441,9 @@ def create_job(user_id, address, note, files, delivery_mode=DELIVER, copies=1, p
         cur.execute(
             "INSERT INTO print_jobs_logs (job_id, actor, from_status, to_status, remark, created_at) "
             "VALUES (%s,%s,%s,%s,%s,NOW())",
-            (job_id, actor[:64], None, S_PENDING, "创建任务"),
+            (job_id, actor[:64], None, status, "创建任务（即时付款待支付）" if pay_method == "alipay" else "创建任务"),
         )
-        if charge > 0:
+        if charge > 0 and deduct:
             cur.execute(
                 "INSERT INTO balance_logs (user_id, delta, balance_after, reason, job_id, actor, created_at) "
                 "VALUES (%s,%s,%s,%s,%s,%s,NOW())",
@@ -472,11 +490,27 @@ def get_balance(user_id):
     return row["balance"] if row else Decimal("0")
 
 
-def refund_job(job_id, reason, actor=None):
-    """把某任务已扣的钱退回去（charge 清零 + 加回余额 + 记流水）；没扣过钱则原样返回 0。
+class RefundError(RuntimeError):
+    """退款失败（如支付宝原路退款接口报错），由接口层转成中文提示。"""
 
-    与「改 charge」在同一事务里完成，重复调用不会重复退款（charge 已为 0 就什么都不做）。
+
+def refund_job(job_id, reason, actor=None):
+    """把某任务已支付的钱退回去；没付过钱则返回 0。
+
+    - 余额支付：charge 清零 + 加回余额 + 记流水；
+    - 即时付款：调用支付宝原路退款，成功后 charge 清零并标记订单已退款。
+
+    重复调用不会重复退款（charge 已为 0 就什么都不做）。
     """
+    job = get_job(job_id)
+    if not job:
+        return Decimal("0")
+    charge = Decimal(str(job.get("charge") or 0)).quantize(Decimal("0.01"))
+    if charge <= 0:
+        return Decimal("0")
+    if (job.get("pay_method") or "balance") == "alipay":
+        return _refund_alipay_job(job, charge, reason, actor)
+
     with tx() as cur:
         cur.execute("SELECT user_id, charge FROM print_jobs WHERE id=%s FOR UPDATE", (job_id,))
         row = cur.fetchone()
@@ -496,6 +530,51 @@ def refund_job(job_id, reason, actor=None):
             (user_id, charge, balance_after, reason[:64], job_id, (actor or None) and actor[:64]),
         )
     return charge
+
+
+def _refund_alipay_job(job, charge, reason, actor):
+    """即时付款任务走支付宝原路退款（网络调用在事务外，避免长时间持锁）。"""
+    import payments      # 延迟导入，避免 db ↔ payments 的模块级循环依赖
+
+    with tx() as cur:
+        cur.execute(
+            "SELECT * FROM payment_orders WHERE job_id=%s AND purpose='job' AND status='paid' "
+            "ORDER BY id DESC LIMIT 1",
+            (job["id"],),
+        )
+        order = cur.fetchone()
+    if not order:
+        raise RefundError("未找到该任务的支付宝支付记录，无法原路退款")
+    if (order.get("refund_status") or "") == "refunded":
+        with tx() as cur:
+            cur.execute("UPDATE print_jobs SET charge=0, updated_at=NOW() WHERE id=%s", (job["id"],))
+        return Decimal("0")
+
+    try:
+        payments.refund_trade(order["out_trade_no"], charge, out_request_no=f"JOB{job['id']}")
+    except Exception as exc:
+        LOG.warning("任务 #%s 支付宝退款失败：%s", job["id"], exc)
+        raise RefundError(f"支付宝退款失败：{exc}")
+
+    with tx() as cur:
+        cur.execute("SELECT charge FROM print_jobs WHERE id=%s FOR UPDATE", (job["id"],))
+        row = cur.fetchone()
+        if not row:
+            return Decimal("0")
+        current = Decimal(str(row["charge"] or 0)).quantize(Decimal("0.01"))
+        if current <= 0:
+            return Decimal("0")
+        cur.execute("UPDATE print_jobs SET charge=0, updated_at=NOW() WHERE id=%s", (job["id"],))
+        cur.execute(
+            "UPDATE payment_orders SET refund_status='refunded', refunded_at=NOW(), updated_at=NOW() WHERE id=%s",
+            (order["id"],),
+        )
+        cur.execute(
+            "INSERT INTO print_jobs_logs (job_id, actor, from_status, to_status, remark, created_at) "
+            "VALUES (%s,%s,%s,%s,%s,NOW())",
+            (job["id"], str(actor or "system")[:64], job.get("status"), job.get("status"), reason[:500] or None),
+        )
+    return current
 
 
 def list_balance_logs(user_id=None, limit=50):
@@ -518,15 +597,17 @@ def list_balance_logs(user_id=None, limit=50):
 
 # ── 充值订单（支付宝）──
 
-def create_payment_order(user_id, amount, channel="alipay"):
+def create_payment_order(user_id, amount, channel="alipay", purpose="recharge", job_id=None, credit_amount=None):
     """创建一条待支付订单，返回订单 dict（含 out_trade_no）。"""
     amount = Decimal(str(amount)).quantize(Decimal("0.01"))
+    credit = Decimal(str(credit_amount if credit_amount is not None else amount)).quantize(Decimal("0.01"))
     out_trade_no = "AP" + datetime.now().strftime("%Y%m%d%H%M%S") + secrets.token_hex(4).upper()
     with tx() as cur:
         cur.execute(
-            "INSERT INTO payment_orders (out_trade_no, user_id, amount, channel, status, created_at, updated_at) "
-            "VALUES (%s,%s,%s,%s,'pending',NOW(),NOW())",
-            (out_trade_no, user_id, amount, channel),
+            "INSERT INTO payment_orders "
+            "(out_trade_no, user_id, amount, purpose, job_id, credit_amount, channel, status, created_at, updated_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,'pending',NOW(),NOW())",
+            (out_trade_no, user_id, amount, purpose, job_id, credit, channel),
         )
         order_id = cur.lastrowid
     return get_payment_order_by_id(order_id)
@@ -547,10 +628,13 @@ def get_payment_order_by_id(order_id):
 
 
 def mark_payment_paid(out_trade_no, provider_txn_id=None):
-    """把待支付订单标记为已支付并给用户加余额（同一事务，幂等）。
+    """把待支付订单标记为已支付（同一事务，幂等）。
+
+    - purpose=recharge：按 credit_amount 给用户加余额（含赠送）；
+    - purpose=job：不给余额加钱，把对应打印任务从「待支付」改成「待审核」。
 
     返回 (order, balance_after, credited)：订单不存在返回 (None, None, False)；
-    已支付过则 credited=False（不重复加钱）；已关闭/失败返回 (None, None, False)。
+    已支付过则 credited=False（不重复入账）；已关闭/失败返回 (None, None, False)。
     """
     with tx() as cur:
         cur.execute("SELECT * FROM payment_orders WHERE out_trade_no=%s FOR UPDATE", (out_trade_no,))
@@ -564,18 +648,42 @@ def mark_payment_paid(out_trade_no, provider_txn_id=None):
             return None, None, False
 
         amount = Decimal(str(row["amount"] or 0)).quantize(Decimal("0.01"))
+        credit = row.get("credit_amount")
+        credit = amount if credit is None else Decimal(str(credit)).quantize(Decimal("0.01"))
+        purpose = row.get("purpose") or "recharge"
         cur.execute(
             "UPDATE payment_orders SET status='paid', provider_txn_id=%s, paid_at=NOW(), updated_at=NOW() "
             "WHERE id=%s",
             ((provider_txn_id or None) and str(provider_txn_id)[:64], row["id"]),
         )
-        cur.execute("UPDATE users SET balance = balance + %s WHERE id=%s", (amount, row["user_id"]))
-        balance_after = _user_balance(cur, row["user_id"])
-        cur.execute(
-            "INSERT INTO balance_logs (user_id, delta, balance_after, reason, job_id, actor, created_at) "
-            "VALUES (%s,%s,%s,%s,%s,%s,NOW())",
-            (row["user_id"], amount, balance_after, "支付宝充值", None, "alipay"),
-        )
+
+        if purpose == "job":
+            job_id = row.get("job_id")
+            if job_id:
+                cur.execute("SELECT status FROM print_jobs WHERE id=%s FOR UPDATE", (job_id,))
+                job = cur.fetchone()
+                if job and job["status"] == S_UNPAID:
+                    cur.execute(
+                        "UPDATE print_jobs SET status=%s, updated_at=NOW() WHERE id=%s",
+                        (S_PENDING, job_id),
+                    )
+                    cur.execute(
+                        "INSERT INTO print_jobs_logs (job_id, actor, from_status, to_status, remark, created_at) "
+                        "VALUES (%s,%s,%s,%s,%s,NOW())",
+                        (job_id, "alipay", S_UNPAID, S_PENDING, "即时付款到账，进入审核队列"),
+                    )
+                else:
+                    LOG.warning("即时付款到账但任务 #%s 状态不是待支付：%s", job_id, job and job["status"])
+            balance_after = _user_balance(cur, row["user_id"])
+        else:
+            cur.execute("UPDATE users SET balance = balance + %s WHERE id=%s", (credit, row["user_id"]))
+            balance_after = _user_balance(cur, row["user_id"])
+            reason = "支付宝充值（含赠送）" if credit > amount else "支付宝充值"
+            cur.execute(
+                "INSERT INTO balance_logs (user_id, delta, balance_after, reason, job_id, actor, created_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,NOW())",
+                (row["user_id"], credit, balance_after, reason, None, "alipay"),
+            )
     return get_payment_order(out_trade_no), balance_after, True
 
 
@@ -612,6 +720,55 @@ def _user_balance(cur, user_id):
     cur.execute("SELECT balance FROM users WHERE id=%s", (user_id,))
     row = cur.fetchone()
     return row["balance"] if row else Decimal("0")
+
+
+def set_job_payment_order(job_id, payment_order_id):
+    """把即时付款任务关联到 payment_orders.id。"""
+    with tx() as cur:
+        cur.execute(
+            "UPDATE print_jobs SET payment_order_id=%s, updated_at=NOW() WHERE id=%s",
+            (payment_order_id, job_id),
+        )
+
+
+def clear_job_charge(job_id):
+    """未支付的即时付款任务取消时清零 charge（没有真实扣款，不能留下金额痕迹）。"""
+    with tx() as cur:
+        cur.execute("UPDATE print_jobs SET charge=0, updated_at=NOW() WHERE id=%s", (job_id,))
+
+
+def get_payment_order_by_job(job_id, pending_only=False):
+    """取某任务最近一笔支付宝订单（pending_only=True 只看待支付）。"""
+    sql = "SELECT * FROM payment_orders WHERE job_id=%s AND purpose='job'"
+    if pending_only:
+        sql += " AND status='pending'"
+    sql += " ORDER BY id DESC LIMIT 1"
+    with tx() as cur:
+        cur.execute(sql, (job_id,))
+        row = cur.fetchone()
+    return _row(row, PAYMENT_FIELDS) if row else None
+
+
+def mark_payment_refunded(out_trade_no):
+    """标记订单已退款（用于支付成功后任务已取消等需要自动退款的兜底场景）。"""
+    with tx() as cur:
+        cur.execute(
+            "UPDATE payment_orders SET refund_status='refunded', refunded_at=NOW(), updated_at=NOW() "
+            "WHERE out_trade_no=%s",
+            (out_trade_no,),
+        )
+        return cur.rowcount > 0
+
+
+def list_unpaid_jobs_before(minutes=30):
+    """列出超过指定分钟数仍「待支付」的任务（用于惰性清理）。"""
+    with tx() as cur:
+        cur.execute(
+            f"SELECT id, user_id FROM print_jobs WHERE status=%s "
+            f"AND created_at < NOW() - INTERVAL {int(minutes)} MINUTE",
+            (S_UNPAID,),
+        )
+        return [dict(row) for row in cur.fetchall()]
 
 
 def list_jobs(user_id=None):

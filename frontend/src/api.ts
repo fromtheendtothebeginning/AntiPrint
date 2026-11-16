@@ -13,6 +13,7 @@ import type {
   Profile,
   RechargeResult,
   Settings,
+  SubmitJobResult,
   User,
 } from './types/api'
 
@@ -455,9 +456,15 @@ export const api = {
   },
 
   /** 提交打印任务（multipart：address 必填、note 可选、files 可多个） */
-  async submitJob(formData: FormData): Promise<Job> {
-    const data = await request<{ job: Job }>('/api/jobs', { method: 'POST', body: formData })
-    return data.job
+  async submitJob(formData: FormData): Promise<SubmitJobResult> {
+    return request<SubmitJobResult>('/api/jobs', { method: 'POST', body: formData })
+  },
+
+  /** 为「待支付」的即时付款任务重新获取收银台地址 */
+  async payJob(jobId: number): Promise<{ job: Job; out_trade_no: string; pay_url: string }> {
+    return request<{ job: Job; out_trade_no: string; pay_url: string }>(`/api/jobs/${jobId}/pay`, {
+      method: 'POST',
+    })
   },
 
   /** 取任务文件内容：接口需要 Bearer，因此用 fetch 拿 Blob 再由调用方 createObjectURL */

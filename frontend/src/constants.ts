@@ -3,6 +3,7 @@
 import type { JobStatus, PrintOptions } from './types/api'
 
 export const STATUS_PENDING: JobStatus = '待审核'
+export const STATUS_UNPAID: JobStatus = '待支付'
 export const STATUS_APPROVED: JobStatus = '已通过'
 export const STATUS_PRINTING: JobStatus = '打印中'
 export const STATUS_PRINTED: JobStatus = '已打印'
@@ -44,6 +45,7 @@ export const BADGE_BASE =
 
 /** 状态徽章配色：待审核=琥珀、已通过=青绿、打印中=灰青、已打印=翠绿、已驳回=陶土、打印失败=红、待配送=天蓝、待取件=紫、已完成=中性灰 */
 const STATUS_BADGE_CLASS: Record<JobStatus, string> = {
+  [STATUS_UNPAID]: 'bg-orange-500/15 text-orange-600 dark:text-orange-400',
   [STATUS_PENDING]: 'bg-amber/15 text-amber-700 dark:text-amber',
   [STATUS_APPROVED]: 'bg-brand/10 text-brand-dark dark:text-brand',
   [STATUS_PRINTING]: 'bg-slate-teal/15 text-slate-teal',

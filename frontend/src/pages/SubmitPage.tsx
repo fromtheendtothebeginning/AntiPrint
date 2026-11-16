@@ -10,6 +10,7 @@ import {
   ArrowRight,
   CircleAlert,
   CircleCheckBig,
+  Coins,
   Eye,
   FileText,
   LoaderCircle,
@@ -21,6 +22,7 @@ import {
   Truck,
   Upload,
   UserCog,
+  Wallet,
 } from 'lucide-react'
 import { ApiError, api, getErrorMessage } from '../api'
 import DropZone from '../components/DropZone'
@@ -139,8 +141,20 @@ function SubmitPage() {
   /** 计费信息（余额/单价/是否免费）与本次扣费：免费账号不显示费用行 */
   const [bill, setBill] = useState<{ balance: string; price: string; billable: boolean; free_reason: string } | null>(null)
   const [charged, setCharged] = useState<{ charge: string; balance: string } | null>(null)
-  /** 余额不足弹窗（付款码暂未实现，先给占位说明） */
+  const [createdPayMode, setCreatedPayMode] = useState<'balance' | 'instant'>('balance')
+  /** 余额不足弹窗（可切换即时付款） */
   const [paywall, setPaywall] = useState<{ message: string; cost: string; balance: string } | null>(null)
+  /** 支付方式：余额支付 / 即时付款（支付宝） */
+  const [payMode, setPayMode] = useState<'balance' | 'instant'>('balance')
+  /** 即时付款等待确认 */
+  const [instantOrder, setInstantOrder] = useState<{
+    out_trade_no: string
+    pay_url: string
+    amount: string
+    jobId: number
+  } | null>(null)
+  const [payError, setPayError] = useState('')
+  const [checkingPay, setCheckingPay] = useState(false)
 
   /** 当前选中的 Word/PPT 在服务端转成 PDF 后的预览地址（非 Office 文件为空） */
   const [officePreviewUrl, setOfficePreviewUrl] = useState('')
@@ -273,6 +287,82 @@ function SubmitPage() {
     setPicked((prev) => prev.filter((_, current) => current !== index))
   }
 
+  // 即时付款：轮询订单状态，支付成功后切到成功卡片
+  useEffect(() => {
+    if (!instantOrder) return
+    let cancelled = false
+    const tick = async () => {
+      try {
+        const { order } = await api.getPaymentOrder(instantOrder.out_trade_no)
+        if (cancelled) return
+        if (order.status === 'paid') {
+          const job = await api.getJob(instantOrder.jobId)
+          if (cancelled) return
+          const info = await api.getBalance().catch(() => null)
+          setCharged({ charge: instantOrder.amount, balance: info ? String(info.balance) : (bill?.balance ?? '0') })
+          setCreatedPayMode('instant')
+          setCreated(job)
+          setInstantOrder(null)
+        } else if (order.status === 'closed' || order.status === 'failed') {
+          setInstantOrder(null)
+          setPayError('支付订单已关闭，请重新提交任务')
+        }
+      } catch {
+        // 轮询失败静默重试
+      }
+    }
+    void tick()
+    const timer = window.setInterval(tick, 2000)
+    const timeout = window.setTimeout(() => {
+      setInstantOrder(null)
+      setPayError('支付等待超时，请到「我的任务」重新发起支付或取消订单')
+    }, 5 * 60 * 1000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+      window.clearTimeout(timeout)
+    }
+  }, [instantOrder, bill?.balance])
+
+  const checkInstantPay = async () => {
+    if (!instantOrder) return
+    setCheckingPay(true)
+    setPayError('')
+    try {
+      const { order } = await api.getPaymentOrder(instantOrder.out_trade_no)
+      if (order.status === 'paid') {
+        const job = await api.getJob(instantOrder.jobId)
+        const info = await api.getBalance().catch(() => null)
+        setCharged({ charge: instantOrder.amount, balance: info ? String(info.balance) : '0' })
+        setCreatedPayMode('instant')
+        setCreated(job)
+        setInstantOrder(null)
+      } else {
+        setPayError('还没有查到到账，请完成支付后再试')
+      }
+    } catch (err) {
+      setPayError(getErrorMessage(err))
+    } finally {
+      setCheckingPay(false)
+    }
+  }
+
+  const cancelInstantPay = async () => {
+    if (!instantOrder) return
+    setCheckingPay(true)
+    setPayError('')
+    try {
+      await api.cancelRechargeOrder(instantOrder.out_trade_no)
+      setInstantOrder(null)
+      setStep(1)
+      setPayMode('balance')
+    } catch (err) {
+      setPayError(getErrorMessage(err))
+    } finally {
+      setCheckingPay(false)
+    }
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (picked.length === 0) {
@@ -291,6 +381,7 @@ function SubmitPage() {
     formData.append('delivery_mode', mode)
     formData.append('address', trimmedAddress)
     formData.append('note', note.trim())
+    formData.append('pay_mode', payMode)
     // 逐文件设置：数组顺序与 files 一一对应，每项键齐全（页面范围为空串也带上）
     formData.append(
       'settings',
@@ -306,24 +397,54 @@ function SubmitPage() {
     )
     for (const item of picked) formData.append('files', item.file)
 
+    // 即时付款：先同步开窗，避免 await 之后被浏览器拦截
+    const payWindow = payMode === 'instant' && bill?.billable ? window.open('', '_blank') : null
     setError('')
+    setPayError('')
     setSubmitting(true)
     try {
-      const job = await api.submitJob(formData)
-      setCreated(job)
+      const result = await api.submitJob(formData)
+      if (result.pay_mode === 'instant' && result.pay_url) {
+        setInstantOrder({
+          out_trade_no: result.out_trade_no || '',
+          pay_url: result.pay_url,
+          amount: result.charge,
+          jobId: result.job.id,
+        })
+        if (payWindow) {
+          payWindow.location.href = result.pay_url
+        } else {
+          window.open(result.pay_url, '_blank', 'noopener,noreferrer')
+        }
+        setPicked([])
+        setSelectedIndex(0)
+        setAddress('')
+        setNote('')
+        setStep(1)
+        return
+      }
+      if (payWindow) payWindow.close()
+      setCreated(result.job)
+      setCreatedPayMode(result.pay_mode)
       // 计费以服务端为准（张数 × 单价）：成功后刷新余额，成功卡片展示本次扣费与剩余余额
       const info = await api.getBalance().catch(() => null)
-      if (info) {
-        setBill({ balance: String(info.balance), price: info.price, billable: info.billable, free_reason: info.free_reason })
-        setCharged({ charge: String(job.charge ?? 0), balance: String(info.balance) })
-      }
+      setBill((prev) =>
+        info
+          ? { balance: String(info.balance), price: info.price, billable: info.billable, free_reason: info.free_reason }
+          : prev,
+      )
+      setCharged({
+        charge: String(result.charge ?? result.job.charge ?? 0),
+        balance: info ? String(info.balance) : String(result.balance ?? 0),
+      })
       setPicked([])
       setSelectedIndex(0)
       setAddress('')
       setNote('')
       setStep(1)
     } catch (err) {
-      // 余额不足（402）：弹「付款码（暂未实现）」占位，而不是干巴巴一行红字
+      if (payWindow) payWindow.close()
+      // 余额不足（402）：弹窗提示，可切换即时付款
       if (err instanceof ApiError && err.status === 402 && err.detail && typeof err.detail === 'object') {
         const detail = err.detail as { message?: string; cost?: string; balance?: string }
         setPaywall({
@@ -337,6 +458,68 @@ function SubmitPage() {
     } finally {
       setSubmitting(false)
     }
+  }
+
+  if (instantOrder) {
+    return (
+      <section className="mx-auto flex w-full max-w-xl flex-col items-center gap-4 rounded-2xl bg-white p-8 text-center shadow-xl shadow-black/[0.04] dark:bg-ink-soft">
+        <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-brand/10 text-brand-dark dark:text-brand">
+          <QrCode className="h-7 w-7" />
+        </span>
+        <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100">等待支付确认</h2>
+        <p className="text-sm text-gray-400">
+          支付宝收银台已打开，请扫码支付；支付成功后任务会自动进入审核队列。
+        </p>
+        <ul className="w-full space-y-3 rounded-xl bg-warm p-5 text-left text-sm dark:bg-white/5">
+          <li className="flex items-center justify-between gap-3">
+            <span className="shrink-0 text-gray-400">订单号</span>
+            <strong className="break-all font-mono text-xs text-gray-700 dark:text-gray-200">
+              {instantOrder.out_trade_no}
+            </strong>
+          </li>
+          <li className="flex items-center justify-between gap-3">
+            <span className="shrink-0 text-gray-400">支付金额</span>
+            <span className="font-medium text-gray-700 dark:text-gray-200">
+              {Number(instantOrder.amount).toFixed(2)} 元
+            </span>
+          </li>
+        </ul>
+        {payError ? (
+          <p className="flex w-full items-start gap-2 rounded-xl bg-clay/10 px-4 py-3 text-left text-sm text-clay">
+            <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+            {payError}
+          </p>
+        ) : null}
+        <div className="flex w-full flex-col gap-3 sm:flex-row">
+          <button
+            type="button"
+            className={PRIMARY_BUTTON}
+            onClick={() => void checkInstantPay()}
+            disabled={checkingPay}
+          >
+            {checkingPay ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CircleCheckBig className="h-4 w-4" />}
+            我已完成支付
+          </button>
+          <button
+            type="button"
+            className={SECONDARY_BUTTON}
+            onClick={() => window.open(instantOrder.pay_url, '_blank', 'noopener,noreferrer')}
+          >
+            <QrCode className="h-4 w-4" />
+            重新打开收银台
+          </button>
+          <button
+            type="button"
+            className={SECONDARY_BUTTON}
+            onClick={() => void cancelInstantPay()}
+            disabled={checkingPay}
+          >
+            取消订单
+          </button>
+        </div>
+        <p className="text-xs text-gray-400">超过 30 分钟未支付，订单会自动关闭。</p>
+      </section>
+    )
   }
 
   if (created) {
@@ -364,10 +547,16 @@ function SubmitPage() {
           </li>
           {charged && (
             <li className="flex items-center justify-between gap-3">
-              <span className="shrink-0 text-gray-400">本次扣费</span>
+              <span className="shrink-0 text-gray-400">
+                {createdPayMode === 'instant' ? '支付金额' : '本次扣费'}
+              </span>
               <span className="font-medium text-gray-700 dark:text-gray-200">
-                {Number(charged.charge) > 0 ? `${Number(charged.charge).toFixed(2)} 元` : '免费'}
-                <span className="ml-2 text-xs text-gray-400">余额 {Number(charged.balance).toFixed(2)} 元</span>
+                {Number(charged.charge) > 0
+                  ? `${Number(charged.charge).toFixed(2)} 元${createdPayMode === 'instant' ? '（支付宝）' : ''}`
+                  : '免费'}
+                {createdPayMode !== 'instant' && (
+                  <span className="ml-2 text-xs text-gray-400">余额 {Number(charged.balance).toFixed(2)} 元</span>
+                )}
               </span>
             </li>
           )}
@@ -534,6 +723,59 @@ function SubmitPage() {
             />
           </div>
 
+          {bill?.billable && (
+            <div className="space-y-3">
+              <div className="rounded-2xl bg-gradient-to-r from-amber-400/25 via-orange-300/15 to-rose-400/25 p-4 ring-1 ring-amber-400/30">
+                <p className="flex items-center gap-2 text-sm font-semibold text-amber-700 dark:text-amber">
+                  <Coins className="h-4 w-4" />
+                  充值余额加赠 50%
+                </p>
+                <p className="mt-1 text-xs text-amber-700/80 dark:text-amber/80">
+                  充 10 元到账 15 元，余额可用于所有打印任务；即时付款不享受赠送。
+                </p>
+              </div>
+              <div>
+                <p className="mb-2 text-sm font-medium text-gray-700 dark:text-gray-200">支付方式</p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => setPayMode('balance')}
+                    className={`rounded-xl border px-4 py-3 text-left transition-colors ${
+                      payMode === 'balance'
+                        ? 'border-brand bg-brand/10'
+                        : 'border-gray-200 hover:border-brand/40 dark:border-white/10'
+                    }`}
+                  >
+                    <span className="flex items-center gap-2 text-sm font-medium text-gray-800 dark:text-gray-100">
+                      <Wallet className="h-4 w-4 text-brand" />
+                      余额支付
+                    </span>
+                    <span className="mt-1 block text-xs text-gray-500 dark:text-gray-400">
+                      当前余额 ¥{Number(bill.balance).toFixed(2)}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPayMode('instant')}
+                    className={`rounded-xl border px-4 py-3 text-left transition-colors ${
+                      payMode === 'instant'
+                        ? 'border-brand bg-brand/10'
+                        : 'border-gray-200 hover:border-brand/40 dark:border-white/10'
+                    }`}
+                  >
+                    <span className="flex items-center gap-2 text-sm font-medium text-gray-800 dark:text-gray-100">
+                      <QrCode className="h-4 w-4 text-brand" />
+                      即时付款
+                    </span>
+                    <span className="mt-1 block text-xs text-gray-500 dark:text-gray-400">
+                      支付宝扫码，支付成功后才进入审核
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {error && (
             <p className="flex items-start gap-2 rounded-xl bg-clay/10 px-4 py-3 text-sm text-clay">
               <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
@@ -577,17 +819,21 @@ function SubmitPage() {
             <>
               <button
                 type="button"
-                className={`${SECONDARY_BUTTON} flex-1 justify-center sm:flex-none`}
-                onClick={() => setPaywall(null)}
+                className={`${PRIMARY_BUTTON} flex-1 justify-center sm:flex-none`}
+                onClick={() => {
+                  setPaywall(null)
+                  setPayMode('instant')
+                }}
               >
-                知道了
+                <QrCode className="h-4 w-4" />
+                改用即时付款
               </button>
               <Link
                 to="/balance"
-                className={`${PRIMARY_BUTTON} flex-1 justify-center sm:flex-none`}
+                className={`${SECONDARY_BUTTON} flex-1 justify-center sm:flex-none`}
                 onClick={() => setPaywall(null)}
               >
-                去我的余额
+                去我的余额充值
               </Link>
             </>
           }
@@ -605,13 +851,11 @@ function SubmitPage() {
               {Number(paywall?.balance ?? 0).toFixed(2)} 元
             </span>
           </div>
-          {/* 付款码占位：付款功能未实现，先把位置留出来 */}
-          <div className="mt-4 flex flex-col items-center gap-2 rounded-2xl border border-dashed border-gray-200 px-6 py-8 text-center dark:border-white/10">
-            <QrCode className="h-16 w-16 text-gray-300 dark:text-gray-600" />
-            <p className="text-sm font-medium text-gray-500 dark:text-gray-400">付款码暂未开放</p>
-            <p className="text-xs text-gray-400">
-              充值功能待实现；当前可联系管理员代记余额，或让管理员把账号加入免费白名单。
-            </p>
+          <div className="mt-4 flex items-start gap-2 rounded-xl bg-brand/10 px-4 py-3 text-sm text-brand-dark dark:text-brand">
+            <QrCode className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              可以直接改用「即时付款」：支付宝扫码支付本单，支付成功后任务才进入审核；也可以先去充值余额（充值加赠 50%）。
+            </span>
           </div>
         </Modal>
       </form>

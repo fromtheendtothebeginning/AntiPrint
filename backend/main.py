@@ -501,6 +501,7 @@ def get_balance(user: dict = Depends(auth.get_current_user)):
     """我的余额页：余额、是否计费、为什么免费、单价与最近流水"""
     row = db.get_user_by_id(user["id"]) or {}
     billable = not billing.is_free(row)
+    bonus_percent = _recharge_bonus_percent()
     return {
         "balance": row.get("balance") or 0,
         "billable": billable,
@@ -510,8 +511,18 @@ def get_balance(user: dict = Depends(auth.get_current_user)):
         # 免费账号不需要充值；付费账号按支付宝配置决定是否显示充值入口
         "recharge_enabled": billable and payments.is_enabled(),
         "recharge_amounts": payments.RECHARGE_AMOUNTS,
+        "recharge_bonus_percent": bonus_percent,
         "pay_channels": ["alipay"],
     }
+
+
+def _recharge_bonus_percent() -> int:
+    """充值赠送比例（0~500 的整数，默认 50）。"""
+    raw = str(db.get_settings().get("recharge_bonus_percent") or "0").strip()
+    try:
+        return max(0, min(500, int(raw)))
+    except ValueError:
+        return 50
 
 
 # ── 充值（支付宝电脑网站支付）──
@@ -535,15 +546,24 @@ def create_recharge(body: RechargeBody, user: dict = Depends(auth.get_current_us
         amount = payments.validate_amount(body.amount)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    order = db.create_payment_order(user["id"], amount, "alipay")
+    bonus_percent = _recharge_bonus_percent()
+    credit = (amount * (Decimal("1") + Decimal(bonus_percent) / Decimal("100"))).quantize(Decimal("0.01"))
+    order = db.create_payment_order(
+        user["id"], amount, "alipay", purpose="recharge", credit_amount=credit,
+    )
     try:
         result = payments.create_pay(order)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
-    logger.info("用户 %s 创建充值订单 %s：%s 元", user["username"], order["out_trade_no"], amount)
+    logger.info(
+        "用户 %s 创建充值订单 %s：%s 元（到账 %s 元，赠送 %s%%）",
+        user["username"], order["out_trade_no"], amount, credit, bonus_percent,
+    )
     return {
         "out_trade_no": order["out_trade_no"],
         "amount": f"{amount:.2f}",
+        "credit_amount": f"{credit:.2f}",
+        "bonus_percent": bonus_percent,
         "pay_url": result["pay_url"],
         "mock": result["mock"],
     }
@@ -612,6 +632,14 @@ def cancel_payment_order(out_trade_no: str, user: dict = Depends(auth.get_curren
             }
 
     db.close_payment_order(out_trade_no)
+    if order["purpose"] == "job" and order.get("job_id"):
+        job_id = order["job_id"]
+        db.clear_job_charge(job_id)
+        db.set_status(
+            job_id, constants.S_WITHDRAWN, user["username"],
+            remark="即时付款未支付，取消任务", from_status=constants.S_UNPAID,
+        )
+        logger.info("即时付款任务 #%s 未支付，已取消", job_id)
     logger.info("用户 %s 取消充值订单 %s", user["username"], out_trade_no)
     return {
         "order": db.get_payment_order(out_trade_no),
@@ -644,8 +672,25 @@ async def alipay_notify(request: Request):
         if notified != Decimal(str(order["amount"])):
             logger.warning("支付宝通知金额不一致 %s：订单 %s，通知 %s", out_trade_no, order["amount"], notified)
             return PlainTextResponse("failure", status_code=400)
-        db.mark_payment_paid(out_trade_no, params.get("trade_no"))
-        logger.info("支付宝充值到账：%s（%s 元）", out_trade_no, order["amount"])
+        paid_order, _balance, _credited = db.mark_payment_paid(out_trade_no, params.get("trade_no"))
+        if paid_order and paid_order.get("purpose") == "job":
+            logger.info(
+                "即时付款到账：订单 %s，任务 #%s（%s 元）",
+                out_trade_no, paid_order.get("job_id"), paid_order.get("amount"),
+            )
+            # 兜底：任务已取消/超时清理后才收到支付成功 → 自动原路退款，避免用户白付
+            job = db.get_job(paid_order["job_id"]) if paid_order.get("job_id") else None
+            if not job or job["status"] != constants.S_PENDING:
+                try:
+                    payments.refund_trade(
+                        out_trade_no, paid_order["amount"], out_request_no=f"JOB{paid_order['job_id']}",
+                    )
+                    db.mark_payment_refunded(out_trade_no)
+                    logger.warning("即时付款任务已取消，已自动退款：%s", out_trade_no)
+                except Exception as exc:
+                    logger.error("即时付款任务已取消但自动退款失败 %s：%s", out_trade_no, exc)
+        else:
+            logger.info("支付宝充值到账：%s（%s 元）", out_trade_no, order["amount"])
     elif status == "TRADE_CLOSED":
         db.close_payment_order(out_trade_no)
         logger.info("支付宝订单已关闭：%s", out_trade_no)
@@ -1157,13 +1202,18 @@ def create_job(
     pages: str = Form(default=""),
     nup: str = Form(default=""),
     scale: str = Form(default=""),
+    pay_mode: str = Form(default="balance"),
     files: list[UploadFile] = File(default=[]),
     user: dict = Depends(auth.get_current_user),
 ):
     """提交打印任务（multipart）：配送单必填地址，取件单可留空；1~5 个 PDF/图片，单文件 ≤10MB。
 
     delivery_mode 为空时取用户配置里的 default_delivery（默认「配送」）。
+    pay_mode: balance = 余额支付（默认）；instant = 即时付款（支付宝，支付成功后才进审核）。
     """
+    pay_mode = (pay_mode or "balance").strip().lower()
+    if pay_mode not in ("balance", "instant"):
+        raise HTTPException(status_code=400, detail="支付方式只能是余额支付或即时付款")
     profile = db.get_user_by_id(user["id"]) or {}
     mode = (delivery_mode or "").strip() or (profile.get("default_delivery") or constants.DELIVER)
     if mode not in constants.DELIVERY_MODES:
@@ -1316,19 +1366,25 @@ def create_job(
         # 免费判定还要看 source（anticraft），所以必须按 id 重新取一次库里的行
         billing_user = db.get_user_by_id(user["id"]) or user
         charge = Decimal("0.00") if billing.is_free(billing_user) else amount
+        instant = charge > 0 and pay_mode == "instant"
+        if instant and not payments.is_enabled():
+            raise HTTPException(status_code=503, detail="即时付款暂未开放")
         try:
             job = db.create_job(
                 user["id"], address, note, saved, mode, copies_value,
                 json.dumps(options, ensure_ascii=False),
                 charge=charge,
+                status=constants.S_UNPAID if instant else constants.S_PENDING,
+                pay_method="alipay" if instant else "balance",
+                deduct=not instant,
             )
         except db.InsufficientBalance as exc:
-            # 余额不足：不建单、不扣钱，交给前端弹「付款码（暂未实现）」
+            # 余额不足：不建单、不扣钱，前端可提示改用即时付款
             raise HTTPException(
                 status_code=402,
                 detail={
                     "code": "insufficient_balance",
-                    "message": f"余额不足：本单需 {exc.needed} 元（{sheets} 张 × {billing.price_text()}），当前余额 {exc.balance} 元",
+                    "message": f"余额不足：本单需 {exc.needed} 元（{sheets} 张 × {billing.price_text()}），当前余额 {exc.balance} 元，可改用即时付款",
                     "cost": str(exc.needed),
                     "balance": str(exc.balance),
                     "sheets": sheets,
@@ -1350,11 +1406,42 @@ def create_job(
             "用户 %s 提交任务 #%s（%s 个文件，%s，份数 %s，任务级设置 %s，逐文件设置 %s 条，地址：%s）",
             user["username"], job["id"], len(saved), mode, copies_value, options, len(file_settings), address or "（取件）",
         )
+
+        if instant:
+            order = None
+            try:
+                order = db.create_payment_order(
+                    user["id"], charge, "alipay",
+                    purpose="job", job_id=job["id"], credit_amount=charge,
+                )
+                db.set_job_payment_order(job["id"], order["id"])
+                result = payments.create_pay(order)
+            except Exception as exc:
+                if order:
+                    db.close_payment_order(order["out_trade_no"])
+                db.delete_job(job["id"])
+                shutil.rmtree(dest_dir, ignore_errors=True)
+                logger.exception("即时付款下单失败：%s", exc)
+                raise HTTPException(status_code=503, detail="即时付款下单失败，请稍后重试")
+            logger.info(
+                "任务 #%s 即时付款：%s 张，金额 %s 元（订单 %s）",
+                job["id"], sheets, charge, order["out_trade_no"],
+            )
+            return {
+                "job": _job_payload(db.get_job(job["id"])),
+                "charge": str(charge),
+                "balance": str(db.get_balance(user["id"])),
+                "pay_mode": "instant",
+                "out_trade_no": order["out_trade_no"],
+                "pay_url": result["pay_url"],
+            }
+
         logger.info("任务 #%s 计费：%s 张，扣 %s 元（余额 %s）", job["id"], sheets, charge, db.get_balance(user["id"]))
         return {
             "job": _job_payload(db.get_job(job["id"])),
             "charge": str(charge),
             "balance": str(db.get_balance(user["id"])),
+            "pay_mode": "balance",
         }
     except HTTPException:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -1365,22 +1452,75 @@ def create_job(
         raise HTTPException(status_code=500, detail="提交失败，请稍后重试")
 
 
+def _cleanup_unpaid_jobs():
+    """惰性清理超过 30 分钟仍未支付的即时付款任务（页面加载时顺带执行，不额外起线程）。"""
+    for item in db.list_unpaid_jobs_before(30):
+        job_id = item["id"]
+        order = db.get_payment_order_by_job(job_id, pending_only=True)
+        if order:
+            db.close_payment_order(order["out_trade_no"])
+        db.clear_job_charge(job_id)
+        db.set_status(
+            job_id, constants.S_WITHDRAWN, "system",
+            remark="超时未支付自动取消", from_status=constants.S_UNPAID,
+        )
+        logger.info("超时未支付任务 #%s 已自动取消", job_id)
+
+
+def _refund_job_money(job_id, reason, actor):
+    """统一退款入口：余额单退余额，即时付款单走支付宝原路退款。"""
+    try:
+        return db.refund_job(job_id, reason, actor)
+    except db.RefundError as exc:
+        logger.error("任务 #%s %s失败：%s", job_id, reason, exc)
+        raise HTTPException(status_code=502, detail=f"任务已处理，但{reason}失败：{exc}")
+
+
 @app.get("/api/jobs/mine")
 def my_jobs(user: dict = Depends(auth.get_current_user)):
     """我的任务（倒序，含文件列表）"""
+    _cleanup_unpaid_jobs()
     return {"jobs": [_job_payload(j) for j in db.list_jobs(user["id"])]}
 
 
 @app.get("/api/jobs")
 def all_jobs(user: dict = Depends(auth.require_admin)):
-    """管理端任务队列 + 代理列表 + 代理在线状态"""
+    """管理端任务队列 + 代理列表 + 代理在线状态（待支付任务不进审核队列）"""
+    _cleanup_unpaid_jobs()
     agents = db.list_agents()
-    return {"jobs": [_job_payload(j) for j in db.list_jobs()], "agents": agents, "agent_online": _agent_online(agents)}
+    jobs = [j for j in db.list_jobs() if j["status"] != constants.S_UNPAID]
+    return {"jobs": [_job_payload(j) for j in jobs], "agents": agents, "agent_online": _agent_online(agents)}
 
 
 @app.get("/api/jobs/{job_id}")
 def job_detail(job_id: int, user: dict = Depends(auth.get_current_user)):
     return {"job": _job_payload(_load_job_for(job_id, user))}
+
+
+@app.post("/api/jobs/{job_id}/pay")
+def pay_job(job_id: int, user: dict = Depends(auth.get_current_user)):
+    """为「待支付」的即时付款任务重新获取收银台地址（从「我的任务」继续支付）。"""
+    job = _load_job_for(job_id, user)
+    if job["status"] != constants.S_UNPAID:
+        raise HTTPException(status_code=400, detail=f"当前状态「{job['status']}」不需要支付")
+    if not payments.is_enabled():
+        raise HTTPException(status_code=503, detail="即时付款暂未开放")
+    order = db.get_payment_order_by_job(job_id, pending_only=True)
+    if not order:
+        order = db.create_payment_order(
+            job["user_id"], job["charge"], "alipay",
+            purpose="job", job_id=job_id, credit_amount=job["charge"],
+        )
+        db.set_job_payment_order(job_id, order["id"])
+    try:
+        result = payments.create_pay(order)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    return {
+        "job": _job_payload(job),
+        "out_trade_no": order["out_trade_no"],
+        "pay_url": result["pay_url"],
+    }
 
 
 @app.get("/api/jobs/{job_id}/files/{file_id}")
@@ -1454,7 +1594,7 @@ def reject(job_id: int, body: RejectBody, user: dict = Depends(auth.require_admi
     )
     if not ok:
         raise HTTPException(status_code=409, detail="任务状态已变化，请刷新后重试")
-    refunded = db.refund_job(job_id, "驳回退费", user["username"])
+    refunded = _refund_job_money(job_id, "驳回退费", user["username"])
     if refunded:
         logger.info("任务 #%s 驳回，退回 %s 元", job_id, refunded)
     return {"job": _job_payload(db.get_job(job_id)), "refunded": str(refunded)}
@@ -1502,13 +1642,32 @@ def withdraw(job_id: int, user: dict = Depends(auth.get_current_user)):
         raise HTTPException(status_code=403, detail="只能撤回自己的任务")
     if job["status"] not in constants.USER_WITHDRAWABLE:
         raise HTTPException(status_code=400, detail=f"当前状态「{job['status']}」不能撤回（已开始打印或已结束）")
+
+    if job["status"] == constants.S_UNPAID:
+        order = db.get_payment_order_by_job(job_id, pending_only=True)
+        if order:
+            db.close_payment_order(order["out_trade_no"])
+        db.clear_job_charge(job_id)
+        ok = db.set_status(
+            job_id, constants.S_WITHDRAWN, user["username"],
+            remark="即时付款未支付，取消任务", from_status=constants.S_UNPAID,
+        )
+        if not ok:
+            raise HTTPException(status_code=409, detail="任务状态已变化，请刷新后重试")
+        logger.info("用户 %s 取消未支付的即时付款任务 #%s", user["username"], job_id)
+        return {
+            "job": _job_payload(db.get_job(job_id)),
+            "refunded": "0",
+            "balance": str(db.get_balance(user["id"])),
+        }
+
     ok = db.set_status(
         job_id, constants.S_WITHDRAWN, user["username"],
         remark="提交人撤回任务", from_status=job["status"],
     )
     if not ok:
         raise HTTPException(status_code=409, detail="任务状态已变化（可能已被打印代理领取），请刷新后重试")
-    refunded = db.refund_job(job_id, "撤回退费", user["username"])
+    refunded = _refund_job_money(job_id, "撤回退费", user["username"])
     if refunded:
         logger.info("任务 #%s 撤回，退回 %s 元", job_id, refunded)
     logger.info("用户 %s 撤回任务 #%s", user["username"], job_id)
@@ -1577,7 +1736,7 @@ def delete_job(job_id: int, user: dict = Depends(auth.require_admin)):
     if job["status"] in (
         constants.S_PENDING, constants.S_APPROVED, constants.S_REJECTED, constants.S_WITHDRAWN,
     ):
-        refunded = db.refund_job(job_id, "删除退费", user["username"])
+        refunded = _refund_job_money(job_id, "删除退费", user["username"])
     db.delete_job(job_id)
     shutil.rmtree(config.UPLOAD_DIR / str(job_id), ignore_errors=True)
     for item in job.get("files", []):

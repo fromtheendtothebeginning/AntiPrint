@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   Coins,
   CreditCard,
+  Gift,
   Info,
   LoaderCircle,
   Receipt,
@@ -36,7 +37,11 @@ function BalancePage() {
   const [loading, setLoading] = useState(true)
   const [amount, setAmount] = useState('10')
   const [paying, setPaying] = useState(false)
-  const [pending, setPending] = useState<{ out_trade_no: string; amount: string } | null>(null)
+  const [pending, setPending] = useState<{
+    out_trade_no: string
+    amount: string
+    credit_amount?: string
+  } | null>(null)
   const [payError, setPayError] = useState('')
   const [paySuccess, setPaySuccess] = useState('')
   const [canceling, setCanceling] = useState(false)
@@ -115,7 +120,11 @@ function BalancePage() {
     setPaying(true)
     try {
       const result = await api.createRecharge(value.toFixed(2))
-      setPending({ out_trade_no: result.out_trade_no, amount: result.amount })
+      setPending({
+        out_trade_no: result.out_trade_no,
+        amount: result.amount,
+        credit_amount: result.credit_amount,
+      })
       if (payWindow) {
         payWindow.location.href = result.pay_url
       } else {
@@ -181,6 +190,12 @@ function BalancePage() {
   }
 
   const logs = info?.logs ?? []
+  const bonusPercent = info?.recharge_bonus_percent ?? 0
+  const amountNumber = Number(amount)
+  const creditPreview =
+    Number.isFinite(amountNumber) && amountNumber > 0
+      ? amountNumber * (1 + bonusPercent / 100)
+      : 0
 
   return (
     <div className="space-y-5">
@@ -222,6 +237,18 @@ function BalancePage() {
             支付宝扫码支付，到账后自动加到余额（单笔 1~50 元）
           </p>
 
+          {bonusPercent > 0 && (
+            <div className="mt-4 rounded-2xl bg-gradient-to-r from-amber-400/25 via-orange-300/15 to-rose-400/25 p-4 ring-1 ring-amber-400/30">
+              <p className="flex items-center gap-2 text-sm font-semibold text-amber-700 dark:text-amber">
+                <Gift className="h-4 w-4" />
+                充值余额加赠 {bonusPercent}%
+              </p>
+              <p className="mt-1 text-xs text-amber-700/80 dark:text-amber/80">
+                充 10 元到账 15 元，多充多送；余额可用于所有打印任务。
+              </p>
+            </div>
+          )}
+
           <div className="mt-4 flex flex-wrap gap-2">
             {(info.recharge_amounts?.length ? info.recharge_amounts : [10, 20, 30, 50]).map((value) => (
               <button
@@ -261,6 +288,13 @@ function BalancePage() {
             </button>
           </div>
 
+          {bonusPercent > 0 && creditPreview > 0 && (
+            <p className="mt-2 text-xs text-amber-700 dark:text-amber">
+              本次到账 <strong>{creditPreview.toFixed(2)} 元</strong>
+              （含赠送 {(creditPreview - amountNumber).toFixed(2)} 元）
+            </p>
+          )}
+
           {payError ? <p className={`${ALERT_ERROR} mt-4`}>{payError}</p> : null}
           {paySuccess ? (
             <p className="mt-4 flex items-start gap-2 rounded-xl bg-emerald-500/10 px-4 py-3 text-sm text-emerald-600 dark:text-emerald-400">
@@ -274,7 +308,8 @@ function BalancePage() {
               <span className="flex items-center gap-2">
                 <LoaderCircle className="h-4 w-4 animate-spin text-brand" />
                 订单 {pending.out_trade_no}
-                {pending.amount ? ` · ${pending.amount} 元` : ''} 等待支付
+                {pending.amount ? ` · 支付 ${pending.amount} 元` : ''}
+                {pending.credit_amount ? ` · 到账 ${pending.credit_amount} 元` : ''} 等待支付
               </span>
               <button
                 type="button"
