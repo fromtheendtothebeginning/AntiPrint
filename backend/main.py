@@ -583,6 +583,43 @@ def get_payment_order(out_trade_no: str, user: dict = Depends(auth.get_current_u
     }
 
 
+@app.post("/api/pay/orders/{out_trade_no}/cancel")
+def cancel_payment_order(out_trade_no: str, user: dict = Depends(auth.get_current_user)):
+    """取消待支付订单；取消前先查单，避免用户已付款但回调未到时误关单。"""
+    order = db.get_payment_order(out_trade_no)
+    if not order:
+        raise HTTPException(status_code=404, detail="充值订单不存在")
+    if order["user_id"] != user["id"] and user["role"] not in ("admin", "root"):
+        raise HTTPException(status_code=403, detail="无权操作该订单")
+    if order["status"] != "pending":
+        raise HTTPException(status_code=400, detail="该订单已支付或已关闭")
+
+    if not payments.is_mock():
+        trade = payments.query_trade(out_trade_no)
+        if trade and trade.get("trade_status") in payments.TRADE_SUCCESS:
+            try:
+                notified = Decimal(str(trade.get("total_amount") or 0)).quantize(Decimal("0.01"))
+            except Exception:
+                notified = Decimal("0")
+            if notified != Decimal(str(order["amount"])):
+                raise HTTPException(status_code=409, detail="支付金额异常，请联系管理员")
+            db.mark_payment_paid(out_trade_no, trade.get("trade_no"))
+            logger.info("取消订单时发现已支付，已入账：%s", out_trade_no)
+            return {
+                "order": db.get_payment_order(out_trade_no),
+                "canceled": False,
+                "balance": str(db.get_balance(order["user_id"])),
+            }
+
+    db.close_payment_order(out_trade_no)
+    logger.info("用户 %s 取消充值订单 %s", user["username"], out_trade_no)
+    return {
+        "order": db.get_payment_order(out_trade_no),
+        "canceled": True,
+        "balance": str(db.get_balance(order["user_id"])),
+    }
+
+
 @app.post("/api/pay/notify/alipay")
 async def alipay_notify(request: Request):
     """支付宝异步通知：验签 → 核对金额 → 幂等入账。"""

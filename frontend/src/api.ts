@@ -419,6 +419,16 @@ export const api = {
     )
   },
 
+  /** 取消待支付订单（后端会先查单，已付款则直接入账） */
+  async cancelRechargeOrder(
+    outTradeNo: string,
+  ): Promise<{ order: PaymentOrder; canceled: boolean; balance: string }> {
+    return request<{ order: PaymentOrder; canceled: boolean; balance: string }>(
+      `/api/pay/orders/${encodeURIComponent(outTradeNo)}/cancel`,
+      { method: 'POST' },
+    )
+  },
+
   /** root 删除账号（余额必须为 0；任务与流水保留） */
   async deleteUser(userId: number): Promise<void> {
     await request<{ ok: boolean }>(`/api/users/${userId}`, { method: 'DELETE' })

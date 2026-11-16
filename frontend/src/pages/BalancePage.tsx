@@ -39,6 +39,7 @@ function BalancePage() {
   const [pending, setPending] = useState<{ out_trade_no: string; amount: string } | null>(null)
   const [payError, setPayError] = useState('')
   const [paySuccess, setPaySuccess] = useState('')
+  const [canceling, setCanceling] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -142,6 +143,27 @@ function BalancePage() {
       }
     } catch (err) {
       setPayError(getErrorMessage(err))
+    }
+  }
+
+  const cancelPending = async () => {
+    if (!pending) return
+    setPayError('')
+    setCanceling(true)
+    try {
+      const result = await api.cancelRechargeOrder(pending.out_trade_no)
+      setPending(null)
+      if (result.canceled) {
+        setPaySuccess('订单已取消')
+      } else {
+        // 取消前查单发现已经支付：后端已自动入账
+        setPaySuccess(`充值成功，当前余额 ${formatMoney(result.balance)}`)
+      }
+      void load()
+    } catch (err) {
+      setPayError(getErrorMessage(err))
+    } finally {
+      setCanceling(false)
     }
   }
 
@@ -260,6 +282,14 @@ function BalancePage() {
                 className="rounded-lg border border-brand/40 px-3 py-1.5 text-xs font-medium text-brand-dark hover:bg-brand/10 dark:text-brand"
               >
                 我已完成支付
+              </button>
+              <button
+                type="button"
+                onClick={() => void cancelPending()}
+                disabled={canceling}
+                className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-60 dark:border-white/10 dark:text-gray-400 dark:hover:bg-white/5"
+              >
+                {canceling ? '取消中…' : '取消订单'}
               </button>
             </div>
           ) : null}
