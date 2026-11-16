@@ -1,6 +1,7 @@
 # Python
 backend/.venv/
 mcp/.venv/
+*.egg-info/
 __pycache__/
 *.pyc
 

@@ -1,6 +1,7 @@
 # main.py — AntiPrint 后端入口：用户/管理员 HTTP 接口 + 打印代理路由 + 生产静态托管（单进程）
 
 import hashlib
+import asyncio
 import json
 import logging
 import mimetypes
@@ -23,7 +24,7 @@ from urllib.parse import quote
 
 import pymysql
 import uvicorn
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -40,6 +41,7 @@ import db
 import api_docs
 import downloads
 import payments
+import realtime
 import agent_api
 from agent_api import router as agent_router
 
@@ -286,6 +288,7 @@ async def lifespan(app: FastAPI):
         )
     except Exception as exc:
         logger.error("数据库初始化失败，服务仍会启动（/api/health 将报 db=error）：%s", exc)
+    realtime.HUB.bind_loop(asyncio.get_running_loop())
     yield
 
 
@@ -430,6 +433,20 @@ def delete_token(token_id: int, user: dict = Depends(auth.get_current_user)):
         raise HTTPException(status_code=404, detail="令牌不存在或已撤销")
     logger.info("用户 %s 撤销 API 令牌 #%s", user["username"], token_id)
     return {"ok": True}
+
+
+@app.websocket("/api/ws/admin")
+async def admin_realtime(websocket: WebSocket, token: str = ""):
+    """管理端实时推送（手机 App 通知用）：query 带 token（JWT 或 ap_ 长期令牌）。
+
+    事件格式：{"type": "job_pending", "job": {id, username, delivery_mode, charge, created_at, files}}
+    只接受 admin/root；非管理员直接以 1008 关闭。
+    """
+    user = auth.user_from_token(token or websocket.query_params.get("token") or "")
+    if not user or user.get("role") not in ("admin", "root"):
+        await websocket.close(code=1008)
+        return
+    await realtime.HUB.serve(websocket)
 
 
 # ── 用户配置：默认地址 / 默认配送方式 / anticraft 绑定 ──
@@ -626,6 +643,8 @@ def get_payment_order(out_trade_no: str, user: dict = Depends(auth.get_current_u
             if notified == Decimal(str(order["amount"])):
                 db.mark_payment_paid(out_trade_no, trade.get("trade_no"))
                 order = db.get_payment_order(out_trade_no) or order
+                if order.get("purpose") == "job" and order.get("job_id"):
+                    _notify_job_pending(order["job_id"])
             else:
                 logger.warning("支付宝查单金额不一致 %s：订单 %s，支付宝 %s", out_trade_no, order["amount"], notified)
 
@@ -656,6 +675,8 @@ def cancel_payment_order(out_trade_no: str, user: dict = Depends(auth.get_curren
             if notified != Decimal(str(order["amount"])):
                 raise HTTPException(status_code=409, detail="支付金额异常，请联系管理员")
             db.mark_payment_paid(out_trade_no, trade.get("trade_no"))
+            if order.get("purpose") == "job" and order.get("job_id"):
+                _notify_job_pending(order["job_id"])
             logger.info("取消订单时发现已支付，已入账：%s", out_trade_no)
             return {
                 "order": db.get_payment_order(out_trade_no),
@@ -721,6 +742,8 @@ async def alipay_notify(request: Request):
                     logger.warning("即时付款任务已取消，已自动退款：%s", out_trade_no)
                 except Exception as exc:
                     logger.error("即时付款任务已取消但自动退款失败 %s：%s", out_trade_no, exc)
+            else:
+                realtime.HUB.broadcast(realtime.job_pending_event(job))
         else:
             logger.info("支付宝充值到账：%s（%s 元）", out_trade_no, order["amount"])
     elif status == "TRADE_CLOSED":
@@ -1469,6 +1492,7 @@ def create_job(
             }
 
         logger.info("任务 #%s 计费：%s 张，扣 %s 元（余额 %s）", job["id"], sheets, charge, db.get_balance(user["id"]))
+        _notify_job_pending(job["id"])
         return {
             "job": _job_payload(db.get_job(job["id"])),
             "charge": str(charge),
@@ -1497,6 +1521,13 @@ def _cleanup_unpaid_jobs():
             remark="超时未支付自动取消", from_status=constants.S_UNPAID,
         )
         logger.info("超时未支付任务 #%s 已自动取消", job_id)
+
+
+def _notify_job_pending(job_id):
+    """任务进入「待审核」时推送实时事件（手机 App 弹通知）。"""
+    job = db.get_job(job_id)
+    if job and job["status"] == constants.S_PENDING:
+        realtime.HUB.broadcast(realtime.job_pending_event(job))
 
 
 def _refund_job_money(job_id, reason, actor):

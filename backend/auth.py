@@ -119,6 +119,29 @@ def get_current_user(authorization: str = Header(default="")) -> dict:
     }
 
 
+def user_from_token(token: str) -> dict | None:
+    """把一个凭证字符串解析成用户（ap_ 长期令牌或 JWT）；无效返回 None。
+
+    WebSocket 等不走 Header 依赖的场景用它自己做鉴权。
+    """
+    if not token:
+        return None
+    if token.startswith(API_TOKEN_PREFIX):
+        return _user_from_api_token(token)
+    payload = decode_token(token)
+    if not payload:
+        return None
+    try:
+        user_id = int(payload.get("sub"))
+    except (TypeError, ValueError):
+        return None
+    return {
+        "id": user_id,
+        "username": payload.get("username", ""),
+        "role": payload.get("role", "user"),
+    }
+
+
 def require_admin(user: dict = Depends(get_current_user)) -> dict:
     """管理员依赖：admin 或 root 均可（root 是超集）"""
     if user.get("role") not in ("admin", "root"):
