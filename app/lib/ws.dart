@@ -27,6 +27,12 @@ class WsService {
 
   void start() {
     _enabled = true;
+    // 重复调用（登录页 + 首页各一次）时先清掉旧连接，避免同一令牌开两条
+    _subscription?.cancel();
+    _subscription = null;
+    _retry?.cancel();
+    _channel?.sink.close(ws_status.normalClosure);
+    _channel = null;
     _connect();
   }
 
