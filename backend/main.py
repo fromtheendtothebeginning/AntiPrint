@@ -400,6 +400,38 @@ def me(user: dict = Depends(auth.get_current_user)):
     return {"id": user["id"], "username": user["username"], "role": user["role"]}
 
 
+# ── API 令牌（MCP / 脚本长期凭证；明文只在生成时返回一次）──
+
+class TokenBody(BaseModel):
+    name: str | None = None
+
+
+@app.get("/api/tokens")
+def list_tokens(scope: str = "", user: dict = Depends(auth.get_current_user)):
+    """令牌列表：默认只看自己的；root 传 scope=all 看全部（不含明文/哈希）"""
+    everyone = scope == "all" and user["role"] == "root"
+    return {"tokens": db.list_api_tokens(None if everyone else user["id"])}
+
+
+@app.post("/api/tokens")
+def create_token(body: TokenBody, user: dict = Depends(auth.get_current_user)):
+    """生成长期令牌（MCP 用）：返回明文一次，之后只能看到前缀"""
+    plain, token_hash, prefix = auth.generate_api_token()
+    info = db.create_api_token(user["id"], (body.name or "").strip() or "MCP", token_hash, prefix)
+    logger.info("用户 %s 生成 API 令牌 #%s（%s）", user["username"], info["id"], info["name"])
+    return {"token": plain, "token_info": info, "notice": "令牌只显示这一次，请立即保存"}
+
+
+@app.delete("/api/tokens/{token_id}")
+def delete_token(token_id: int, user: dict = Depends(auth.get_current_user)):
+    """撤销令牌：普通账号只能撤自己的，root 可撤任意一条"""
+    ok = db.revoke_api_token(token_id, None if user["role"] == "root" else user["id"])
+    if not ok:
+        raise HTTPException(status_code=404, detail="令牌不存在或已撤销")
+    logger.info("用户 %s 撤销 API 令牌 #%s", user["username"], token_id)
+    return {"ok": True}
+
+
 # ── 用户配置：默认地址 / 默认配送方式 / anticraft 绑定 ──
 
 class ProfileBody(BaseModel):

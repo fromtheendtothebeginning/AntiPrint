@@ -5,6 +5,7 @@
 import hashlib
 import hmac
 import os
+import secrets
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
@@ -58,10 +59,53 @@ def decode_token(token: str):
         return None
 
 
+# ── 长期 API 令牌（MCP / 脚本）：ap_ 前缀 + 32 字节随机串，库里只存 sha256 ──
+
+API_TOKEN_PREFIX = "ap_"
+
+
+def hash_api_token(plain: str) -> str:
+    return hashlib.sha256((plain or "").encode("utf-8")).hexdigest()
+
+
+def generate_api_token() -> tuple[str, str, str]:
+    """生成令牌：返回 (明文, sha256, 展示前缀)。明文只在生成时返回一次。"""
+    plain = API_TOKEN_PREFIX + secrets.token_urlsafe(32)
+    return plain, hash_api_token(plain), plain[:12]
+
+
+def _user_from_api_token(token: str) -> dict | None:
+    """按令牌查用户（角色取库里最新值）；无效/已撤销返回 None。
+
+    db 模块级 import 了 auth，这里必须延迟导入，避免循环依赖。
+    """
+    import db
+
+    row = db.get_user_by_api_token(hash_api_token(token))
+    if not row:
+        return None
+    try:
+        db.touch_api_token(row["token_id"])
+    except Exception:       # 记录使用时间失败不影响鉴权
+        pass
+    return {"id": row["id"], "username": row["username"], "role": row.get("role") or "user"}
+
+
 def get_current_user(authorization: str = Header(default="")) -> dict:
-    """FastAPI 依赖：从 Authorization: Bearer <token> 解析当前用户；失败一律 401"""
+    """FastAPI 依赖：Bearer 支持两种凭证，失败一律 401。
+
+    - ap_ 开头：长期 API 令牌（MCP / 脚本），查 api_tokens 表；
+    - 其他：24 小时 JWT（网页登录）。
+    """
     token = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
-    payload = decode_token(token) if token else None
+    if not token:
+        raise HTTPException(status_code=401, detail="未登录或登录已过期")
+    if token.startswith(API_TOKEN_PREFIX):
+        user = _user_from_api_token(token)
+        if not user:
+            raise HTTPException(status_code=401, detail="API 令牌无效或已撤销")
+        return user
+    payload = decode_token(token)
     if not payload:
         raise HTTPException(status_code=401, detail="未登录或登录已过期")
     try:

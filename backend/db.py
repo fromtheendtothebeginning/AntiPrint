@@ -121,6 +121,18 @@ TABLES = {
         ("created_at", "DATETIME NOT NULL"),
         ("updated_at", "DATETIME NOT NULL"),
     ],
+    # 长期 API 令牌（给 MCP / 脚本用）：只存 sha256，明文仅生成时返回一次；
+    # 认证时按用户当前角色鉴权，撤销后立即失效。
+    "api_tokens": [
+        ("id", "INT AUTO_INCREMENT PRIMARY KEY"),
+        ("user_id", "INT NOT NULL"),
+        ("name", "VARCHAR(64) NOT NULL"),
+        ("token_hash", "CHAR(64) NOT NULL UNIQUE"),
+        ("prefix", "VARCHAR(16) NOT NULL"),
+        ("created_at", "DATETIME NOT NULL"),
+        ("last_used_at", "DATETIME NULL"),
+        ("revoked_at", "DATETIME NULL"),
+    ],
     "settings": [
         ("k", "VARCHAR(64) PRIMARY KEY"),
         ("v", "TEXT"),
@@ -593,6 +605,68 @@ def list_balance_logs(user_id=None, limit=50):
                 (user_id, int(limit)),
             )
         return [_plain(dict(row)) for row in cur.fetchall()]
+
+
+# ── API 令牌（MCP / 脚本长期凭证）──
+
+API_TOKEN_FIELDS = ("id", "user_id", "name", "prefix", "created_at", "last_used_at", "revoked_at")
+
+
+def create_api_token(user_id, name, token_hash, prefix):
+    """落库一条令牌（只存哈希），返回令牌信息（不含明文/哈希）。"""
+    with tx() as cur:
+        cur.execute(
+            "INSERT INTO api_tokens (user_id, name, token_hash, prefix, created_at) "
+            "VALUES (%s,%s,%s,%s,NOW())",
+            (user_id, str(name or "")[:64] or "未命名令牌", token_hash, prefix),
+        )
+        token_id = cur.lastrowid
+        cur.execute("SELECT * FROM api_tokens WHERE id=%s", (token_id,))
+        return _row(cur.fetchone(), API_TOKEN_FIELDS)
+
+
+def list_api_tokens(user_id=None):
+    """令牌列表（倒序）；user_id 为空返回全部（root 用），带用户名。"""
+    with tx() as cur:
+        if user_id is None:
+            cur.execute(
+                "SELECT t.*, u.username FROM api_tokens t LEFT JOIN users u ON u.id=t.user_id "
+                "ORDER BY t.id DESC"
+            )
+            return [_row(row, API_TOKEN_FIELDS + ("username",)) for row in cur.fetchall()]
+        cur.execute("SELECT * FROM api_tokens WHERE user_id=%s ORDER BY id DESC", (user_id,))
+        return [_row(row, API_TOKEN_FIELDS) for row in cur.fetchall()]
+
+
+def get_user_by_api_token(token_hash):
+    """按令牌哈希取用户（角色以库里最新值为准）；令牌不存在/已撤销返回 None。"""
+    with tx() as cur:
+        cur.execute(
+            "SELECT t.id AS token_id, u.id, u.username, u.role, u.source "
+            "FROM api_tokens t JOIN users u ON u.id=t.user_id "
+            "WHERE t.token_hash=%s AND t.revoked_at IS NULL",
+            (token_hash,),
+        )
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def touch_api_token(token_id):
+    """记录最近使用时间（MCP 每次调用都会刷新）。"""
+    with tx() as cur:
+        cur.execute("UPDATE api_tokens SET last_used_at=NOW() WHERE id=%s", (token_id,))
+
+
+def revoke_api_token(token_id, user_id=None):
+    """撤销令牌（传 user_id 时只能撤自己的）；返回是否真的撤销了一条。"""
+    sql = "UPDATE api_tokens SET revoked_at=NOW() WHERE id=%s AND revoked_at IS NULL"
+    params = [token_id]
+    if user_id is not None:
+        sql += " AND user_id=%s"
+        params.append(user_id)
+    with tx() as cur:
+        cur.execute(sql, tuple(params))
+        return cur.rowcount > 0
 
 
 # ── 充值订单（支付宝）──
