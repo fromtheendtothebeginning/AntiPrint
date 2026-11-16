@@ -10,6 +10,9 @@ app/build/
 app/.dart_tool/
 app/.flutter-plugins-dependencies
 app/android/.gradle/
+# 打包好的安装包不入库（需要时重新 flutter build apk）
+*.apk
+*.apk.sha1
 
 # 依赖与构建产物
 node_modules/

@@ -38,6 +38,13 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+
+    // AGP 9.3.1 的 lint CommentDetector 在 JDK 17 下会崩（NoSuchMethodError: JavaDocParser），
+    // release 包不需要 lint，直接关掉更省事（也不影响安装）
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
+    }
 }
 
 dependencies {
