@@ -51,6 +51,10 @@ DYPNS_ERRORS = {
     "MOBILE_NUMBER_ILLEGAL": "手机号格式不正确",
     "FUNCTION_NOT_OPENED": "短信认证服务未开通，请先在阿里云控制台开通",
     "INVALID_PARAMETERS": "短信参数不正确（请检查赠送签名与模板编号）",
+    "Forbidden.NoPermission": "RAM 用户没有短信认证权限，请到 RAM 控制台授权 AliyunDypnsFullAccess",
+    "Forbidden.RAM": "RAM 用户没有短信认证权限，请到 RAM 控制台授权 AliyunDypnsFullAccess",
+    "InvalidAccessKeyId.NotFound": "AccessKey 不存在，请检查 ID 是否填错",
+    "SignatureDoesNotMatch": "AccessKey Secret 不正确，请重新生成后再试",
 }
 
 PHONE_RE = re.compile(r"^1[3-9]\d{9}$")
@@ -121,13 +125,23 @@ def _rpc_sign(secret: str, params: dict) -> str:
 
 
 def _rpc_get(endpoint: str, params: dict, secret: str) -> dict:
-    """调用阿里云 RPC 接口并解析 JSON；网络 / 解析错误抛中文 RuntimeError。"""
+    """调用阿里云 RPC 接口并解析 JSON；网络 / 解析错误抛中文 RuntimeError。
+
+    阿里云的 4xx（签名错误、RAM 没授权等）也会带 JSON 的 Code/Message，
+    这里照样解析出来，交给上层翻成中文，而不是只看到「HTTP 403」。
+    """
     request = urllib.request.Request(
         endpoint + "?" + _rpc_sign(secret, params), headers={"Accept": "application/json"}
     )
     try:
         with urllib.request.urlopen(request, timeout=12) as response:
             body = response.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", "replace")
+        try:
+            return json.loads(body)
+        except json.JSONDecodeError:
+            raise RuntimeError(f"短信网关返回 HTTP {exc.code}")
     except urllib.error.URLError as exc:
         raise RuntimeError(f"短信网关不可达：{exc}")
     try:
