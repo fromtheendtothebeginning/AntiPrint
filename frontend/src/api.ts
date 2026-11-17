@@ -5,6 +5,7 @@ import type {
   Agent,
   AnticraftOauthStatus,
   ApiDocs,
+  ApiToken,
   DeliveryMode,
   DownloadPackage,
   Job,
@@ -302,6 +303,25 @@ export const api = {
   /** 校验当前令牌是否有效，并返回最新的用户信息 */
   async me(): Promise<User> {
     return request<User>('/api/me')
+  },
+
+  /** 我的 API 令牌列表（MCP / 脚本用；不含明文与哈希） */
+  async listTokens(): Promise<ApiToken[]> {
+    const data = await request<{ tokens: ApiToken[] }>('/api/tokens')
+    return data.tokens
+  },
+
+  /** 生成长期 API 令牌：明文只返回这一次，必须立即保存 */
+  async createToken(name: string): Promise<{ token: string; token_info: ApiToken }> {
+    return request<{ token: string; token_info: ApiToken }>('/api/tokens', {
+      method: 'POST',
+      body: { name },
+    })
+  },
+
+  /** 撤销令牌（撤销后 MCP / 脚本立即失效） */
+  async revokeToken(id: number): Promise<void> {
+    await request<{ ok: boolean }>(`/api/tokens/${id}`, { method: 'DELETE' })
   },
 
   /** 我的任务列表 */

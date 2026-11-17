@@ -467,7 +467,7 @@ function SubmitPage() {
 
   if (instantOrder) {
     return (
-      <section className="mx-auto flex w-full max-w-xl flex-col items-center gap-4 rounded-2xl bg-white p-8 text-center shadow-xl shadow-black/[0.04] dark:bg-ink-soft">
+      <section className="mx-auto flex w-full max-w-xl flex-col items-center gap-4 rounded-2xl bg-white p-5 text-center shadow-xl shadow-black/[0.04] sm:p-8 dark:bg-ink-soft">
         <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-brand/10 text-brand-dark dark:text-brand">
           <QrCode className="h-7 w-7" />
         </span>
@@ -529,7 +529,7 @@ function SubmitPage() {
 
   if (created) {
     return (
-      <section className="mx-auto flex w-full max-w-xl flex-col items-center gap-4 rounded-2xl bg-white p-8 text-center shadow-xl shadow-black/[0.04] dark:bg-ink-soft">
+      <section className="mx-auto flex w-full max-w-xl flex-col items-center gap-4 rounded-2xl bg-white p-5 text-center shadow-xl shadow-black/[0.04] sm:p-8 dark:bg-ink-soft">
         <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-brand/10 text-brand-dark dark:text-brand">
           <CircleCheckBig className="h-7 w-7" />
         </span>
@@ -614,7 +614,7 @@ function SubmitPage() {
     return (
       <form className="mx-auto w-full max-w-2xl space-y-5" onSubmit={handleSubmit}>
         {/* 汇总：默认收起，展开可看每个文件及其打印设置 */}
-        <section className="rounded-2xl bg-white p-6 shadow-xl shadow-black/[0.04] dark:bg-ink-soft">
+        <section className="rounded-2xl bg-white p-4 shadow-xl shadow-black/[0.04] sm:p-6 dark:bg-ink-soft">
           <details>
             <summary className="cursor-pointer text-sm font-medium text-gray-700 marker:text-gray-400 dark:text-gray-200">
               <span className="inline-flex items-center gap-2 align-middle">
@@ -640,7 +640,7 @@ function SubmitPage() {
           </details>
         </section>
 
-        <section className="space-y-5 rounded-2xl bg-white p-6 shadow-xl shadow-black/[0.04] dark:bg-ink-soft">
+        <section className="space-y-5 rounded-2xl bg-white p-4 shadow-xl shadow-black/[0.04] sm:p-6 dark:bg-ink-soft">
           {/* 配送方式：配送 = 送到地址；取件 = 出纸后自己来取（地址变成可选的地点备注） */}
           <fieldset>
             <legend className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-200">
@@ -871,7 +871,7 @@ function SubmitPage() {
   return (
     <div className="grid items-start gap-5 lg:grid-cols-2">
       {/* 左栏：上传区 + 文件行列表（点行即选中，右侧设置与预览跟着切换） */}
-      <section className="rounded-2xl bg-white p-6 shadow-xl shadow-black/[0.04] dark:bg-ink-soft">
+      <section className="rounded-2xl bg-white p-4 shadow-xl shadow-black/[0.04] sm:p-6 dark:bg-ink-soft">
         <div className="mb-4 flex items-center gap-3">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand-dark dark:text-brand">
             <FileText className="h-[18px] w-[18px]" />
@@ -970,7 +970,7 @@ function SubmitPage() {
       </section>
 
       {/* 右栏：当前选中文件的打印设置 + 预览（设置只作用于选中的那个文件） */}
-      <section className="space-y-4 rounded-2xl bg-white p-6 shadow-xl shadow-black/[0.04] dark:bg-ink-soft">
+      <section className="space-y-4 rounded-2xl bg-white p-4 shadow-xl shadow-black/[0.04] sm:p-6 dark:bg-ink-soft">
         {selectedFile ? (
           <>
             <div className="flex items-center gap-3">

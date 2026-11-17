@@ -8,7 +8,7 @@ import { api, getErrorMessage } from '../api'
 import { formatTime } from '../constants'
 import type { ApiDocs } from '../types/api'
 
-const CARD = 'rounded-2xl bg-white p-6 shadow-xl shadow-black/[0.04] dark:bg-ink-soft'
+const CARD = 'rounded-2xl bg-white p-4 shadow-xl shadow-black/[0.04] sm:p-6 dark:bg-ink-soft'
 const ALERT_ERROR =
   'flex items-start gap-2 rounded-xl bg-red-500/10 px-4 py-3 text-sm text-red-600 dark:text-red-400'
 const ALERT_INFO = 'flex items-start gap-2 rounded-xl bg-amber/15 px-4 py-3 text-sm text-amber-700 dark:text-amber'

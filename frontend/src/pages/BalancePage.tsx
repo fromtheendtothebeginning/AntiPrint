@@ -17,7 +17,7 @@ import { api, getErrorMessage } from '../api'
 import { formatTime } from '../constants'
 import type { BalanceInfo } from '../types/api'
 
-const CARD = 'rounded-2xl bg-white p-6 shadow-xl shadow-black/[0.04] dark:bg-ink-soft'
+const CARD = 'rounded-2xl bg-white p-4 shadow-xl shadow-black/[0.04] sm:p-6 dark:bg-ink-soft'
 const ALERT_INFO = 'flex items-start gap-2 rounded-xl bg-amber/15 px-4 py-3 text-sm text-amber-700 dark:text-amber'
 const ALERT_ERROR =
   'flex items-start gap-2 rounded-xl bg-red-500/10 px-4 py-3 text-sm text-red-600 dark:text-red-400'
@@ -351,7 +351,8 @@ function BalancePage() {
             <p>还没有余额变动记录</p>
           </div>
         ) : (
-          <div className="mt-4 overflow-x-auto">
+          <>
+          <div className="mt-4 hidden overflow-x-auto sm:block">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-gray-100 dark:border-white/10">
@@ -391,6 +392,38 @@ function BalancePage() {
               </tbody>
             </table>
           </div>
+
+          {/* 手机端：流水按卡片竖排（4 列表格在窄屏上要左右拖） */}
+          <ul className="mt-4 space-y-2 sm:hidden">
+            {logs.map((log) => {
+              const delta = Number(log.delta ?? 0)
+              return (
+                <li
+                  key={log.id}
+                  className="rounded-xl border border-gray-100 px-3 py-2.5 dark:border-white/10"
+                >
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="min-w-0 text-sm text-gray-600 dark:text-gray-300">{log.reason}</span>
+                    <span
+                      className={`shrink-0 text-sm font-medium ${
+                        delta < 0 ? 'text-clay' : 'text-emerald-600 dark:text-emerald-400'
+                      }`}
+                    >
+                      {delta > 0 ? '+' : ''}
+                      {formatMoney(delta)}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-gray-400">
+                    <span>{formatTime(log.created_at)}</span>
+                    {log.job_id ? <span>任务 #{log.job_id}</span> : null}
+                    {log.actor ? <span>（{log.actor}）</span> : null}
+                    <span className="ml-auto">余额 {formatMoney(log.balance_after)}</span>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+          </>
         )}
       </section>
 

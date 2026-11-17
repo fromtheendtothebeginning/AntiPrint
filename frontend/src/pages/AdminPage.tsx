@@ -33,7 +33,7 @@ const CUSTOM_PRINTER = '__custom__'
 const MASKED_SECRET = '******'
 
 /* ---------- 样式配方（照 AGENTS.md「前端约定」，保证与全站一致） ---------- */
-const CARD = 'rounded-2xl bg-white p-6 shadow-xl shadow-black/[0.04] dark:bg-ink-soft'
+const CARD = 'rounded-2xl bg-white p-4 shadow-xl shadow-black/[0.04] sm:p-6 dark:bg-ink-soft'
 const LABEL = 'mb-1.5 block text-xs font-medium text-gray-500 dark:text-gray-400'
 const INPUT =
   'w-full rounded-xl border border-gray-200 bg-warm px-4 py-2.5 text-sm text-gray-800 placeholder:text-gray-400 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30 dark:border-white/10 dark:bg-white/5 dark:text-gray-100'

@@ -56,6 +56,11 @@ export default {
       pendingSig: '',
       loading: false,
       booted: false,
+      // 正在处理的任务 id：同一单的按钮在请求期间禁用，防止连点造成重复审核
+      busyId: 0,
+      refreshing: false,
+      // 详情子页打开时不能整块重画根节点（会把子页栈一起冲掉）
+      detailOpen: false,
     };
     let pollTimer = null;
 
@@ -133,6 +138,7 @@ export default {
     // ── 数据 ──
     async function loadJobs(silent) {
       const data = await api('/api/jobs');
+      const before = state.jobs.map((job) => job.id + ':' + job.status).join(',');
       state.jobs = Array.isArray(data.jobs) ? data.jobs : [];
       state.agents = Array.isArray(data.agents) ? data.agents : [];
       state.agentOnline = data.agent_online === true;
@@ -153,7 +159,9 @@ export default {
         }
       }
       state.pendingSig = signature;
-      if (!silent) render();
+      // 轮询时只在数据真的变了才重画：避免每 30 秒整页闪一次，也保证新任务 / 状态变化能自动出现
+      const after = state.jobs.map((job) => job.id + ':' + job.status).join(',');
+      if (!silent || before !== after) render();
     }
 
     async function loadUsers() {
@@ -164,6 +172,7 @@ export default {
 
     async function refreshAll(silent) {
       state.loading = true;
+      state.refreshing = true;
       if (!silent) render();
       try {
         if (!state.me) {
@@ -176,6 +185,7 @@ export default {
         if (!String(err.message).includes('重新登录')) ctx.ui.toast(err.message);
       } finally {
         state.loading = false;
+        state.refreshing = false;
         render();
       }
     }
@@ -255,46 +265,75 @@ export default {
     }
 
     // ── 操作 ──
+    /** 卡片退场：先淡出，再重排列表，别让点完「通过」后整页「啪」地跳一下 */
+    function animateOut(jobId) {
+      const card = root.querySelector('.ap-card[data-id="' + jobId + '"]');
+      if (!card) return Promise.resolve();
+      card.classList.add('leaving');
+      return new Promise((resolve) => setTimeout(resolve, 160));
+    }
+
+    /** 用接口返回的最新任务替换列表里的同 id 项（先就地更新，再后台同步全量） */
+    function applyJob(job) {
+      if (!job || !job.id) return;
+      state.jobs = state.jobs.map((item) => (item.id === job.id ? { ...item, ...job } : item));
+    }
+
     async function runAction(action, job) {
+      if (state.busyId) return false;
+      state.busyId = job.id;
       try {
+        let data = null;
         if (action === 'approve') {
-          await api('/api/jobs/' + job.id + '/approve', { method: 'POST' });
+          data = await api('/api/jobs/' + job.id + '/approve', { method: 'POST' });
           ctx.ui.toast('#' + job.id + ' 已通过审核');
         } else if (action === 'reject') {
           const reason = await askText('驳回任务 #' + job.id, '填写驳回理由（用户可见，费用会自动退回）');
           if (!reason) return false;
-          await api('/api/jobs/' + job.id + '/reject', { method: 'POST', body: { reason } });
+          data = await api('/api/jobs/' + job.id + '/reject', { method: 'POST', body: { reason } });
           ctx.ui.toast('#' + job.id + ' 已驳回');
         } else if (action === 'retry') {
-          await api('/api/jobs/' + job.id + '/retry', { method: 'POST' });
+          data = await api('/api/jobs/' + job.id + '/retry', { method: 'POST' });
           ctx.ui.toast('已重新入队');
         } else if (action === 'reprint') {
           if (!(await confirmBox('重新打印', '#' + job.id + ' 会重新进入打印队列，确定吗？'))) return false;
-          await api('/api/jobs/' + job.id + '/reprint', { method: 'POST' });
+          data = await api('/api/jobs/' + job.id + '/reprint', { method: 'POST' });
           ctx.ui.toast('已重新入队');
         } else if (action === 'advance') {
           const to = job.delivery_mode === '取件' ? '待取件' : '待配送';
-          await api('/api/jobs/' + job.id + '/advance', { method: 'POST', body: { to } });
+          data = await api('/api/jobs/' + job.id + '/advance', { method: 'POST', body: { to } });
           ctx.ui.toast('已标记为' + to);
         } else if (action === 'done') {
-          await api('/api/jobs/' + job.id + '/advance', { method: 'POST', body: { to: '已完成' } });
+          data = await api('/api/jobs/' + job.id + '/advance', { method: 'POST', body: { to: '已完成' } });
           ctx.ui.toast('已标记为已完成');
         } else if (action === 'withdraw') {
           if (!(await confirmBox('撤回任务', '撤回后任务结束，已扣费用会自动退回。确定吗？'))) return false;
-          await api('/api/jobs/' + job.id + '/withdraw', { method: 'POST' });
+          data = await api('/api/jobs/' + job.id + '/withdraw', { method: 'POST' });
           ctx.ui.toast('已撤回并退费');
         } else if (action === 'delete') {
           if (!(await confirmBox('删除任务', '任务与上传文件会永久删除，未出纸的费用会退回。确定吗？'))) return false;
-          await api('/api/jobs/' + job.id, { method: 'DELETE' });
+          data = await api('/api/jobs/' + job.id, { method: 'DELETE' });
+          state.jobs = state.jobs.filter((item) => item.id !== job.id);
           ctx.ui.toast('已删除 #' + job.id);
+          if (!state.detailOpen) render();
+          return { deleted: true };
         } else {
           return true;
         }
-        await loadJobs(true);
-        return true;
+        // 成功后：卡片淡出 → 就地更新状态 → 重画列表（详情页打开时只更新数据，不重画根节点）
+        await animateOut(job.id);
+        applyJob(data && data.job);
+        if (!state.detailOpen) render();
+        // 后台再同步一次全量（代理在线状态、别人的操作），失败不影响刚才的结果
+        loadJobs(true).catch(() => {});
+        return (data && data.job) || true;
       } catch (err) {
         ctx.ui.toast(String(err.message || err));
+        // 409（状态已变化）或网络抖动：顺手刷新一次，别让界面停在旧状态
+        loadJobs(true).catch(() => {});
         return false;
+      } finally {
+        state.busyId = 0;
       }
     }
 
@@ -373,14 +412,16 @@ export default {
     function jobCard(job, withActions) {
       const status = String(job.status || '');
       const files = filesOf(job);
+      const busy = state.busyId === job.id;
       const actions = withActions
         ? '<div class="ap-actions">' +
-          '<button class="ap-btn ok" data-action="approve" data-id="' + job.id + '">通过</button>' +
-          '<button class="ap-btn danger" data-action="reject" data-id="' + job.id + '">驳回</button>' +
+          '<button class="ap-btn ok" data-action="approve" data-id="' + job.id + '"' + (busy ? ' disabled' : '') + '>' +
+          (busy ? '处理中…' : '通过') + '</button>' +
+          '<button class="ap-btn danger" data-action="reject" data-id="' + job.id + '"' + (busy ? ' disabled' : '') + '>驳回</button>' +
           '</div>'
         : '';
       return (
-        '<article class="ap-card" data-action="detail" data-id="' + job.id + '">' +
+        '<article class="ap-card' + (busy ? ' busy' : '') + '" data-action="detail" data-id="' + job.id + '">' +
         '<div class="ap-row">' +
         '<span class="ap-id">#' + job.id + '</span>' +
         '<span class="ap-badge" data-status="' + esc(status) + '">' + esc(status) + '</span>' +
@@ -441,7 +482,7 @@ export default {
         (state.agentOnline ? '代理在线' : '代理离线') + '</span>' +
         '</div>' +
         '<div class="ap-head-actions">' +
-        '<button class="ap-icon" data-action="refresh" title="刷新">⟳</button>' +
+        '<button class="ap-icon' + (state.refreshing ? ' spinning' : '') + '" data-action="refresh" title="刷新">⟳</button>' +
         '<button class="ap-icon" data-action="settings" title="设置">⚙</button>' +
         '</div>' +
         '</header>' +
@@ -458,7 +499,13 @@ export default {
     }
 
     function render() {
+      // 详情页打开时根节点被压在下面：整块重画会把子页一起冲掉，等 onPop 再重画
+      if (state.detailOpen) return;
+      const list = root.querySelector('.ap-list');
+      const scrollTop = list ? list.scrollTop : 0;
       root.innerHTML = state.token ? mainHtml() : loginHtml();
+      const next = root.querySelector('.ap-list');
+      if (next && scrollTop) next.scrollTop = scrollTop;
     }
 
     // ── 详情子页 ──
@@ -519,9 +566,12 @@ export default {
     }
 
     async function openDetail(jobId) {
+      state.detailOpen = true;
       const sub = ctx.ui.push({
         onPop: () => {
-          loadJobs(true).catch(() => {});
+          // 退层后列表按最新数据整页重画（动作里只改了数据，根节点被压着没重画）
+          state.detailOpen = false;
+          loadJobs(false).catch(() => {});
         },
       });
       const page = sub.root;
@@ -537,25 +587,25 @@ export default {
       }
       page.addEventListener('click', async (event) => {
         const target = event.target.closest('[data-detail-action]');
-        if (!target || !job) return;
+        if (!target || !job || target.disabled) return;
         const action = target.dataset.detailAction;
         if (action === 'back') {
           sub.close();
           return;
         }
-        const ok = await runAction(action, job);
-        if (!ok) return;
-        if (action === 'delete') {
+        target.disabled = true;
+        const result = await runAction(action, job);
+        if (!result) {
+          target.disabled = false;
+          return;
+        }
+        if (result.deleted) {
           sub.close();
           return;
         }
-        try {
-          const data = await api('/api/jobs/' + jobId);
-          job = data.job;
-          page.innerHTML = detailHtml(job);
-        } catch (err) {
-          ctx.ui.toast(String(err.message || err));
-        }
+        // 接口返回的就是最新任务：直接拿它重画详情，不再多一次 GET
+        if (result && result.id) job = result;
+        page.innerHTML = detailHtml(job);
       });
     }
 
@@ -633,7 +683,11 @@ export default {
       }
       if (action === 'approve' || action === 'reject') {
         const job = state.jobs.find((item) => item.id === Number(target.dataset.id));
-        if (job) await runAction(action, job);
+        if (job) {
+          target.disabled = true;   // 立刻反馈，不用等接口回来
+          const result = await runAction(action, job);
+          if (!result) target.disabled = false;
+        }
       }
     });
 

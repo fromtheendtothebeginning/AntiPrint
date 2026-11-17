@@ -165,7 +165,24 @@ button { cursor: pointer; }
   border-radius: 14px;
   padding: 12px 14px;
   margin: 8px 0;
+  transition: opacity 0.16s ease, transform 0.16s ease, box-shadow 0.16s ease;
 }
+
+/* 处理中的卡片：轻微压暗 + 不可点，明确告诉用户请求还在飞 */
+.ap-card.busy { opacity: 0.66; pointer-events: none; }
+
+/* 操作成功后卡片先淡出缩小，再让列表重排（160ms，与 JS 的延迟对齐） */
+.ap-card.leaving { opacity: 0; transform: scale(0.97); }
+
+.ap-icon.spinning { animation: ap-spin 0.8s linear infinite; }
+
+@keyframes ap-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* 列表滚动时卡片不抖动：触摸滚动交给系统惯性 */
+.ap-btn { touch-action: manipulation; }
 
 .ap-row { display: flex; align-items: center; gap: 8px; }
 

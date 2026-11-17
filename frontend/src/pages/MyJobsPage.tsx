@@ -208,7 +208,7 @@ function MyJobsPage() {
           {jobs.map((job) => (
             <article
               key={job.id}
-              className="rounded-2xl bg-white p-6 shadow-xl shadow-black/[0.04] transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl dark:bg-ink-soft"
+              className="rounded-2xl bg-white p-4 shadow-xl shadow-black/[0.04] transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl sm:p-6 dark:bg-ink-soft"
             >
               <header className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-3">

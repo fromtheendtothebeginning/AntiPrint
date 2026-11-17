@@ -251,3 +251,16 @@ export interface DownloadPackage {
   sha256: string
   updated_at: number
 }
+
+/** MCP / 脚本用的长期 API 令牌（库里只存哈希，明文只在生成时返回一次） */
+export interface ApiToken {
+  id: number
+  user_id: number
+  name: string
+  /** 展示前缀（ap_ 开头的前 12 位），用来区分不同令牌 */
+  prefix: string
+  created_at: string
+  last_used_at: string | null
+  revoked_at: string | null
+  username?: string
+}

@@ -62,7 +62,7 @@ const FILTERS: StatusFilter[] = [
 ]
 
 /* ---------- 样式配方（照 AGENTS.md「前端约定」，保证与全站一致） ---------- */
-const CARD = 'rounded-2xl bg-white p-6 shadow-xl shadow-black/[0.04] dark:bg-ink-soft'
+const CARD = 'rounded-2xl bg-white p-4 shadow-xl shadow-black/[0.04] sm:p-6 dark:bg-ink-soft'
 const TH = 'whitespace-nowrap px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-400'
 const TD = 'px-4 py-2.5 align-middle text-sm text-gray-600 dark:text-gray-300'
 const TD_NOWRAP = `${TD} whitespace-nowrap`
@@ -427,7 +427,7 @@ function QueuePage() {
 
         <p className="mb-4 text-xs text-gray-400">
           共 {visibleJobs.length} 条任务（列表每 15 秒自动刷新；出纸后按配送方式勾选交接状态）
-          <span className="lg:hidden">　·　左右滑动查看完整表格</span>
+          <span className="hidden md:inline">　·　左右滑动查看完整表格</span>
         </p>
 
         {loading ? (
@@ -441,7 +441,8 @@ function QueuePage() {
             <p>{jobs.length === 0 ? '暂无打印任务' : '没有符合筛选条件的任务'}</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+          <div className="hidden overflow-x-auto md:block">
             {/* 固定列宽（table-fixed）：除「文件与设置」吃剩余宽度外都是定宽，
                 配合各列的 truncate 保证数据行永远单行；只有收货地址列允许换行。
                 列宽按各列内容的下限取（任务 210 / 地址 220 / 状态 195 / 操作 285） */}
@@ -676,6 +677,65 @@ function QueuePage() {
               </tbody>
             </table>
           </div>
+
+          {/* 手机端：卡片列表（表格 920px 宽在手机上只能左右拖，改成竖排卡片，点卡片看详情与操作） */}
+          <ul className="space-y-3 md:hidden">
+            {visibleJobs.map((job) => {
+              const reason =
+                job.status === STATUS_REJECTED
+                  ? job.reject_reason
+                  : job.status === STATUS_FAILED
+                    ? job.print_error
+                    : ''
+              return (
+                <li key={job.id}>
+                  <button
+                    type="button"
+                    className="w-full rounded-2xl border border-gray-100 bg-white p-4 text-left shadow-sm shadow-black/[0.03] transition-colors active:bg-warm dark:border-white/10 dark:bg-white/5 dark:active:bg-white/10"
+                    onClick={() => setDetailId(job.id)}
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-mono text-sm font-semibold text-gray-700 dark:text-gray-200">
+                        #{job.id}
+                      </span>
+                      <span className={statusBadge(job.status)}>{job.status}</span>
+                      <span className="ml-auto text-xs text-gray-400">{shortTime(job.created_at)}</span>
+                    </div>
+                    <div className="mt-2 flex items-center justify-between gap-2">
+                      <span className="min-w-0 truncate text-sm text-gray-700 dark:text-gray-200">
+                        {job.username || `用户 #${job.user_id}`}
+                      </span>
+                      <span className="shrink-0 text-sm font-medium text-gray-700 dark:text-gray-200">
+                        {Number(job.charge ?? 0).toFixed(2)} 元
+                      </span>
+                    </div>
+                    <div className="mt-1.5 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                      <span className={`${MODE_BADGE[job.delivery_mode]} shrink-0`}>{job.delivery_mode}</span>
+                      <span className="min-w-0 truncate">
+                        {job.address.trim() ? job.address : '未填地址'}
+                      </span>
+                    </div>
+                    <div className="mt-2 flex items-center justify-between gap-2 text-xs text-gray-400">
+                      <span className="min-w-0 truncate">
+                        {job.files.length} 个文件 ·{' '}
+                        {describePrintOptions(job.print_options, job.copies)}
+                      </span>
+                      <span className="inline-flex shrink-0 items-center gap-0.5 font-medium text-brand">
+                        详情
+                        <ChevronRight className="h-3.5 w-3.5" />
+                      </span>
+                    </div>
+                    {reason && (
+                      <p className="mt-2 truncate text-xs text-red-600 dark:text-red-400">
+                        {job.status === STATUS_REJECTED ? '驳回' : '错误'}：{reason}
+                      </p>
+                    )}
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+          </>
         )}
       </section>
 

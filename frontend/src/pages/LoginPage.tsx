@@ -165,7 +165,7 @@ function LoginPage({ onLogin }: LoginPageProps) {
 
   return (
     <div className="flex min-h-[60vh] items-center justify-center">
-      <div className="mx-auto w-full max-w-md rounded-2xl bg-white p-6 shadow-xl shadow-black/[0.04] dark:bg-ink-soft">
+      <div className="mx-auto w-full max-w-md rounded-2xl bg-white p-5 shadow-xl shadow-black/[0.04] sm:p-6 dark:bg-ink-soft">
         <div className="mb-6 flex flex-col items-center gap-2 text-center">
           <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand text-white shadow-lg shadow-brand/25">
             <Printer className="h-6 w-6" />

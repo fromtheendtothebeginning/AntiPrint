@@ -68,12 +68,24 @@
 @layer base {
   html {
     font-family: var(--font-sans);
+    -webkit-text-size-adjust: 100%;
   }
 
   body {
     /* 浅色：暖米白底 + 深灰字；深色：暖黑底 + 浅灰字 */
     @apply bg-warm text-gray-800 antialiased;
     @apply dark:bg-warm-dark dark:text-gray-100;
+    /* 手机端不要因为一个超宽元素整页左右晃 */
+    overflow-x: hidden;
+  }
+
+  /* iOS Safari 在输入框字号 <16px 时会自动放大页面：手机上统一抬到 16px */
+  @media (max-width: 640px) {
+    input,
+    select,
+    textarea {
+      font-size: 16px;
+    }
   }
 
   /* 滚动条（与主题色一致）。注意：伪元素里不能用 @apply dark:xxx——

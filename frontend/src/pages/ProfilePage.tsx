@@ -50,7 +50,7 @@ const ALERT_OK =
 const ALERT_WARN = 'flex items-start gap-2 rounded-xl bg-amber/15 px-4 py-3 text-sm text-amber-700 dark:text-amber'
 
 /** 内容卡片（配方同上，页面内三块共用） */
-const CARD = 'rounded-2xl bg-white p-6 shadow-xl shadow-black/[0.04] dark:bg-ink-soft'
+const CARD = 'rounded-2xl bg-white p-4 shadow-xl shadow-black/[0.04] sm:p-6 dark:bg-ink-soft'
 /** 加载中 / 加载失败时的空状态容器 */
 const EMPTY_CARD =
   'mx-auto flex w-full max-w-xl flex-col items-center gap-3 rounded-2xl border border-dashed border-gray-200 bg-white/60 px-6 py-16 text-center text-sm text-gray-400 dark:border-white/10 dark:bg-white/5'
