@@ -69,6 +69,8 @@ logger = logging.getLogger("antiprint")
 # 登录限速：同一 IP 每分钟最多 10 次尝试（内存滑动窗口，够本机/小规模部署用）
 LOGIN_LIMIT = 10
 LOGIN_WINDOW_SECONDS = 60
+# 测试账号：不要求绑定手机号（仅用于联调，避免测试数据占用真实号码）
+PHONE_EXEMPT_USERS = {"test"}
 _login_hits: dict[str, deque] = {}
 _login_lock = threading.Lock()
 
@@ -116,6 +118,9 @@ def _optional_user(request: Request) -> dict | None:
 
 def _require_phone(user: dict, action: str):
     """未绑定手机号（或未通过短信验证）的账号不能做关键操作。"""
+    # 测试账号不要求绑定手机号（联调用，避免测试数据占用真实号码）
+    if user.get("username") in PHONE_EXEMPT_USERS:
+        return
     row = db.get_user_by_id(user["id"]) or {}
     if not row.get("phone") or not row.get("phone_verified_at"):
         raise HTTPException(status_code=403, detail={
@@ -361,6 +366,12 @@ class LoginBody(BaseModel):
     password: str = ""
 
 
+class SmsLoginBody(BaseModel):
+    """短信验证码登录：手机号 + 6 位验证码（不需要密码）"""
+    phone: str = ""
+    code: str = ""
+
+
 class RejectBody(BaseModel):
     reason: str = ""
 
@@ -438,7 +449,7 @@ def _mask_phone(phone: str) -> str:
 
 @app.post("/api/sms/code")
 def send_sms_code(body: SmsCodeBody, request: Request):
-    """发送短信验证码：注册（未登录）或绑定手机号（已登录）。"""
+    """发送短信验证码：注册（未登录）、绑定手机号（已登录）或短信登录。"""
     phone = sms.normalize_phone(body.phone)
     if not phone:
         raise HTTPException(status_code=400, detail="请填写正确的 11 位手机号")
@@ -453,8 +464,11 @@ def send_sms_code(body: SmsCodeBody, request: Request):
             raise HTTPException(status_code=401, detail="请先登录后再绑定手机号")
         if owner and owner["id"] != user["id"]:
             raise HTTPException(status_code=409, detail="该手机号已被其他账号绑定")
+    elif scene == "login":
+        if not owner:
+            raise HTTPException(status_code=404, detail="该手机号还没有绑定账号，请先注册或绑定手机号")
     else:
-        raise HTTPException(status_code=400, detail="scene 只能是 register 或 bind")
+        raise HTTPException(status_code=400, detail="scene 只能是 register / bind / login")
     try:
         mocked = sms.issue_code(phone, _client_ip(request))
     except RuntimeError as exc:
@@ -479,6 +493,22 @@ def login(body: LoginBody, request: Request):
         raise HTTPException(status_code=401, detail="用户名或密码错误")
     logger.info("用户登录：%s（%s）", user["username"], user["role"])
     return {"token": auth.create_token(user), "user": _public_user(user)}
+
+
+@app.post("/api/login/sms")
+def login_by_sms(body: SmsLoginBody, request: Request):
+    """短信验证码登录：手机号必须已绑定某个账号，验证码通过后直接签发 JWT。"""
+    _rate_limit_login(request)
+    phone = sms.normalize_phone(body.phone)
+    if not phone:
+        raise HTTPException(status_code=400, detail="请填写正确的 11 位手机号")
+    owner = db.get_user_by_phone(phone)
+    if not owner:
+        raise HTTPException(status_code=404, detail="该手机号还没有绑定账号，请先注册或绑定手机号")
+    if not sms.verify_code(phone, body.code):
+        raise HTTPException(status_code=400, detail="短信验证码不正确或已过期，请重新获取")
+    logger.info("用户 %s 使用短信验证码登录", owner["username"])
+    return {"token": auth.create_token(owner), "user": _public_user(owner)}
 
 
 @app.get("/api/me")

@@ -253,14 +253,22 @@ export const api = {
     })
   },
 
-  /** 发送短信验证码：scene=register（未登录）或 bind（已登录绑定/更换手机号） */
+  /** 发送短信验证码：scene=register（未登录注册）/ bind（已登录绑定）/ login（短信登录） */
   async sendSmsCode(
     phone: string,
-    scene: 'register' | 'bind',
+    scene: 'register' | 'bind' | 'login',
   ): Promise<{ ok: boolean; mock: boolean; expires_in: number; notice: string }> {
     return request<{ ok: boolean; mock: boolean; expires_in: number; notice: string }>('/api/sms/code', {
       method: 'POST',
       body: { phone, scene },
+    })
+  },
+
+  /** 短信验证码登录：手机号必须已绑定账号 */
+  async loginSms(phone: string, code: string): Promise<{ token: string; user: User }> {
+    return request<{ token: string; user: User }>('/api/login/sms', {
+      method: 'POST',
+      body: { phone, code },
     })
   },
 

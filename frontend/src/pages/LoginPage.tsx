@@ -3,12 +3,12 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AlertCircle, CheckCircle2, Loader2, LogIn, Printer, ShieldCheck, UserPlus } from 'lucide-react'
+import { AlertCircle, CheckCircle2, Loader2, LogIn, Printer, ShieldCheck, Smartphone, UserPlus } from 'lucide-react'
 import { api, getErrorMessage, setToken, setUser } from '../api'
 import TextField from '../components/TextField'
 import type { AnticraftOauthStatus, User } from '../types/api'
 
-type Tab = 'login' | 'register' | 'anticraft'
+type Tab = 'login' | 'register' | 'sms' | 'anticraft'
 
 /** 自动建号后停留展示成功提示的时长（毫秒） */
 const AUTO_REGISTERED_NOTICE_MS = 1500
@@ -74,9 +74,20 @@ function LoginPage({ onLogin }: LoginPageProps) {
     setError('')
     setNotice('')
     const name = username.trim()
-    if (!name || !password) {
+    // 短信登录不需要用户名密码，只要手机号 + 验证码
+    if (tab !== 'sms' && (!name || !password)) {
       setError('请填写用户名和密码')
       return
+    }
+    if (tab === 'sms') {
+      if (!/^1[3-9]\d{9}$/.test(phone.trim())) {
+        setError('请填写正确的 11 位手机号')
+        return
+      }
+      if (!/^\d{6}$/.test(smsCode.trim())) {
+        setError('请填写 6 位短信验证码')
+        return
+      }
     }
     if (tab === 'register') {
       if (name.length < 2) {
@@ -106,6 +117,8 @@ function LoginPage({ onLogin }: LoginPageProps) {
         const data = await api.loginAnticraft(name, password)
         result = data
         autoRegistered = data.auto_registered
+      } else if (tab === 'sms') {
+        result = await api.loginSms(phone.trim(), smsCode.trim())
       } else {
         result = tab === 'login'
           ? await api.login(name, password)
@@ -142,7 +155,7 @@ function LoginPage({ onLogin }: LoginPageProps) {
     setError('')
     setNotice('')
     try {
-      const result = await api.sendSmsCode(value, 'register')
+      const result = await api.sendSmsCode(value, tab === 'sms' ? 'login' : 'register')
       setCountdown(60)
       setNotice(result.notice)
     } catch (err) {
@@ -157,12 +170,14 @@ function LoginPage({ onLogin }: LoginPageProps) {
     window.location.href = `/api/oauth/anticraft/start?origin=${encodeURIComponent(window.location.origin)}`
   }
 
-  const submitLabel = tab === 'login' ? '登录' : tab === 'register' ? '注册并登录' : 'anticraft 登录'
+  const submitLabel =
+    tab === 'login' ? '登录' : tab === 'register' ? '注册并登录' : tab === 'sms' ? '短信登录' : 'anticraft 登录'
   const loadingLabel = tab === 'register' ? '注册中…' : '登录中…'
   /** 已确认未配置绑定应用时禁用跳转按钮（状态未知则仍可尝试） */
   const oauthDisabled = oauthStatus !== null && !oauthStatus.enabled
   /** Tab 与主按钮的图标（禁止 emoji，一律 lucide 简笔图标） */
-  const SubmitIcon = tab === 'register' ? UserPlus : tab === 'anticraft' ? ShieldCheck : LogIn
+  const SubmitIcon =
+    tab === 'register' ? UserPlus : tab === 'sms' ? Smartphone : tab === 'anticraft' ? ShieldCheck : LogIn
 
   return (
     <div className="flex min-h-[60vh] items-center justify-center">
@@ -178,49 +193,31 @@ function LoginPage({ onLogin }: LoginPageProps) {
         </div>
 
         {/* Tab 用 role="tab"（不是 button）：测试脚本靠它把 Tab 与文案相同的主按钮区分开 */}
-        <div className="mb-5 flex gap-1 rounded-xl bg-gray-100 p-1 dark:bg-white/5" role="tablist">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === 'login'}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm transition-all duration-200 ${
-              tab === 'login'
-                ? 'bg-white font-semibold text-brand shadow-sm dark:bg-white/10'
-                : 'font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
-            }`}
-            onClick={() => switchTab('login')}
-          >
-            <LogIn className="h-4 w-4" />
-            登录
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === 'register'}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm transition-all duration-200 ${
-              tab === 'register'
-                ? 'bg-white font-semibold text-brand shadow-sm dark:bg-white/10'
-                : 'font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
-            }`}
-            onClick={() => switchTab('register')}
-          >
-            <UserPlus className="h-4 w-4" />
-            注册
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === 'anticraft'}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm transition-all duration-200 ${
-              tab === 'anticraft'
-                ? 'bg-white font-semibold text-brand shadow-sm dark:bg-white/10'
-                : 'font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
-            }`}
-            onClick={() => switchTab('anticraft')}
-          >
-            <ShieldCheck className="h-4 w-4" />
-            anticraft 登录
-          </button>
+        <div className="mb-5 flex gap-1 overflow-x-auto rounded-xl bg-gray-100 p-1 dark:bg-white/5" role="tablist">
+          {(
+            [
+              { key: 'login', label: '登录', Icon: LogIn },
+              { key: 'register', label: '注册', Icon: UserPlus },
+              { key: 'sms', label: '短信登录', Icon: Smartphone },
+              { key: 'anticraft', label: 'anticraft', Icon: ShieldCheck },
+            ] as const
+          ).map(({ key, label, Icon }) => (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={tab === key}
+              className={`flex shrink-0 items-center justify-center gap-1 rounded-lg px-2.5 py-2 text-xs transition-all duration-200 sm:flex-1 sm:text-sm ${
+                tab === key
+                  ? 'bg-white font-semibold text-brand shadow-sm dark:bg-white/10'
+                  : 'font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+              }`}
+              onClick={() => switchTab(key)}
+            >
+              <Icon className="h-4 w-4" />
+              {label}
+            </button>
+          ))}
         </div>
 
         {notice && (
@@ -260,6 +257,8 @@ function LoginPage({ onLogin }: LoginPageProps) {
         )}
 
         <form className="space-y-4" onSubmit={handleSubmit}>
+          {tab !== 'sms' && (
+            <>
           <TextField
             label="用户名"
             id="login-username"
@@ -281,8 +280,10 @@ function LoginPage({ onLogin }: LoginPageProps) {
             disabled={loading}
             onChange={(event) => setPassword(event.target.value)}
           />
+            </>
+          )}
 
-          {tab === 'register' && (
+          {(tab === 'register' || tab === 'sms') && (
             <>
               <TextField
                 label="手机号"
@@ -290,7 +291,7 @@ function LoginPage({ onLogin }: LoginPageProps) {
                 name="phone"
                 value={phone}
                 autoComplete="tel"
-                placeholder="11 位手机号（需短信验证）"
+                placeholder={tab === 'sms' ? '已绑定账号的手机号' : '11 位手机号（需短信验证）'}
                 disabled={loading}
                 onChange={(event) => setPhone(event.target.value)}
               />
@@ -345,6 +346,11 @@ function LoginPage({ onLogin }: LoginPageProps) {
 
         {tab === 'register' && (
           <p className="mt-5 text-center text-xs text-gray-400">注册后自动登录；提交的任务需管理员审核通过后才会打印</p>
+        )}
+        {tab === 'sms' && (
+          <p className="mt-5 text-center text-xs text-gray-400">
+            用已绑定手机号 + 短信验证码登录，不需要密码；没绑过手机号请用「注册」或密码登录后在「我的配置」绑定
+          </p>
         )}
         {tab === 'anticraft' && (
           <p className="mt-5 text-center text-xs text-gray-400">
