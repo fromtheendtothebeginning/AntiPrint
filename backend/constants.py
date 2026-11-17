@@ -41,11 +41,12 @@ PRINT_SCALE = ("fit", "noscale", "shrink")                   # 适应纸张 / �
 PRINT_COPIES_MAX = 99
 PAGE_RANGE_MAX_LEN = 64                                      # 页面范围形如 1-3,5,8-
 
-# 打印完成后的交接流转（管理员在任务队列里勾选）：
-#   已打印 →（配送单）待配送 /（取件单）待取件 → 已完成
+# 打印完成后的交接流转（管理员在任务队列里点选）：
+#   已打印 →（配送单）待配送 /（取件单）待取件 → 已完成；也可以从「已打印」直接点「已完成」
 # 值 = 该目标状态要求的配送方式（None = 不限）；配送单不能进「待取件」，反之亦然
 HANDOVER_NEXT = {
-    S_PRINTED: {S_AWAIT_DELIVERY: DELIVER, S_AWAIT_PICKUP: PICKUP},
+    # 已打印可以直接「已完成」（取件单当场交付时不用先点待取件再点完成）
+    S_PRINTED: {S_AWAIT_DELIVERY: DELIVER, S_AWAIT_PICKUP: PICKUP, S_DONE: None},
     S_AWAIT_DELIVERY: {S_DONE: None},
     S_AWAIT_PICKUP: {S_DONE: None},
 }

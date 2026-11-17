@@ -2,7 +2,7 @@
   "id": "antiprint.admin",
   "name": "AntiPrint 管理",
   "desc": "远程打印任务审核、交接、用户余额与打印设置，全在手机上处理",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "main": "main.js",
   "style": "style.css",
   "permissions": ["storage", "network", "notification"],

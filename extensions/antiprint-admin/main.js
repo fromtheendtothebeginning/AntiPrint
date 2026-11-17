@@ -522,6 +522,8 @@ export default {
       if (status === '已打印') {
         buttons.push('<button class="ap-btn primary" data-detail-action="advance">' +
           (job.delivery_mode === '取件' ? '待取件' : '待配送') + '</button>');
+        // 当场交付：直接跳到底，不用先点待取件/待配送再点完成
+        buttons.push('<button class="ap-btn" data-detail-action="done">直接完成</button>');
       }
       if (status === '待配送' || status === '待取件') {
         buttons.push('<button class="ap-btn primary" data-detail-action="done">已完成</button>');

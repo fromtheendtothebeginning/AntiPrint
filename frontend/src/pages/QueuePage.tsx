@@ -660,6 +660,19 @@ function QueuePage() {
                               <span>{target}</span>
                             </label>
                           )}
+                          {/* 已打印 → 已完成：当场交付时一步到位，不用先点待取件再点完成 */}
+                          {job.status === STATUS_PRINTED && (
+                            <button
+                              type="button"
+                              className={BTN_SM_SECONDARY}
+                              disabled={rowBusy}
+                              title="跳过待取件/待配送，直接标记为已完成"
+                              onClick={() => void handleAdvance(job, STATUS_DONE)}
+                            >
+                              <ListChecks className="h-3.5 w-3.5" />
+                              直接完成
+                            </button>
+                          )}
                           <button
                             type="button"
                             className="inline-flex items-center gap-1 rounded-lg bg-clay/10 px-2.5 py-1.5 text-xs font-medium text-clay transition-colors hover:bg-clay/20 disabled:cursor-not-allowed disabled:opacity-60"
@@ -894,6 +907,18 @@ function QueuePage() {
                 >
                   <ListChecks className="h-4 w-4" />
                   标记为「{handoverTarget(sheetJob)}」
+                </button>
+              )}
+              {sheetJob.status === STATUS_PRINTED && (
+                <button
+                  type="button"
+                  className={`${BTN_PRIMARY_ROW} bg-white text-gray-700 shadow-black/5 dark:bg-white/10 dark:text-gray-200`}
+                  disabled={actingId === sheetJob.id}
+                  title="跳过待取件/待配送，直接标记为已完成"
+                  onClick={() => void runFromSheet(() => handleAdvance(sheetJob, STATUS_DONE))}
+                >
+                  <Check className="h-4 w-4" />
+                  直接完成
                 </button>
               )}
               <button

@@ -1897,10 +1897,11 @@ def reprint(job_id: int, user: dict = Depends(auth.require_admin)):
 
 @app.post("/api/jobs/{job_id}/advance")
 def advance(job_id: int, body: AdvanceBody, user: dict = Depends(auth.require_admin)):
-    """打印完成后的交接流转（管理员在任务队列里勾选）：
+    """打印完成后的交接流转（管理员在任务队列里点选）：
 
-    已打印 → 待配送（仅配送单）/ 待取件（仅取件单）→ 已完成。
-    目标状态与当前状态由 constants.HANDOVER_NEXT 约束，配送单不能进「待取件」，反之亦然。
+    已打印 → 待配送（仅配送单）/ 待取件（仅取件单）/ **已完成**（当场交付，一步到位）；
+    待配送 / 待取件 → 已完成。目标状态由 constants.HANDOVER_NEXT 约束，
+    配送单不能进「待取件」，反之亦然。
     """
     target = (body.to or "").strip()
     job = _load_job_for(job_id, user)
