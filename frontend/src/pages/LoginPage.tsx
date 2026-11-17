@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AlertCircle, CheckCircle2, Loader2, LogIn, Printer, ShieldCheck, UserPlus } from 'lucide-react'
-import { api, getErrorMessage, setToken, setUser } from '../api'
+import { ApiError, api, getErrorMessage, setToken, setUser } from '../api'
 import TextField from '../components/TextField'
 import type { AnticraftOauthStatus, User } from '../types/api'
 
@@ -37,6 +37,11 @@ function LoginPage({ onLogin }: LoginPageProps) {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [loading, setLoading] = useState(false)
+  /**
+   * 当前后端是否已开通短信接口：null = 还没试过，false = 后端没有这个接口。
+   * 旧版后端没有 /api/sms/code，此时注册退回「用户名 + 密码」，避免注册入口直接卡死。
+   */
+  const [smsReady, setSmsReady] = useState<boolean | null>(null)
 
   // 发送验证码后的 60 秒倒计时
   useEffect(() => {
@@ -87,13 +92,16 @@ function LoginPage({ onLogin }: LoginPageProps) {
         setError('密码至少 6 位')
         return
       }
-      if (!/^1[3-9]\d{9}$/.test(phone.trim())) {
-        setError('请填写正确的 11 位手机号')
-        return
-      }
-      if (!/^\d{6}$/.test(smsCode.trim())) {
-        setError('请填写 6 位短信验证码')
-        return
+      // 短信接口已确认不可用（旧版后端）时不做手机号校验
+      if (smsReady !== false) {
+        if (!/^1[3-9]\d{9}$/.test(phone.trim())) {
+          setError('请填写正确的 11 位手机号')
+          return
+        }
+        if (!/^\d{6}$/.test(smsCode.trim())) {
+          setError('请填写 6 位短信验证码')
+          return
+        }
       }
     }
 
@@ -145,6 +153,12 @@ function LoginPage({ onLogin }: LoginPageProps) {
       setCountdown(60)
       setNotice(result.notice)
     } catch (err) {
+      // 旧版后端没有短信接口（404 / 405）：退回用户名 + 密码注册，别把注册入口卡死
+      if (err instanceof ApiError && (err.status === 404 || err.status === 405)) {
+        setSmsReady(false)
+        setNotice('当前站点还没开通短信服务，可以直接用用户名和密码注册')
+        return
+      }
       setError(getErrorMessage(err))
     } finally {
       setSmsBusy(false)
@@ -281,7 +295,14 @@ function LoginPage({ onLogin }: LoginPageProps) {
             onChange={(event) => setPassword(event.target.value)}
           />
 
-          {tab === 'register' && (
+          {tab === 'register' && smsReady === false && (
+            <p className="flex items-start gap-2 rounded-xl bg-amber/15 px-4 py-3 text-xs leading-relaxed text-amber-700 dark:text-amber">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>当前站点还没开通短信服务：先用用户名和密码注册，绑定手机号功能稍后开放。</span>
+            </p>
+          )}
+
+          {tab === 'register' && smsReady !== false && (
             <>
               <TextField
                 label="手机号"
