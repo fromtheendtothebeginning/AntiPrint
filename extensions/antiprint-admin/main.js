@@ -558,7 +558,7 @@ export default {
         (job.print_error ? '<dt>打印错误</dt><dd>' + esc(job.print_error) + '</dd>' : '') +
         '</dl></section>' +
         '<section class="ap-card"><ul class="ap-files">' + (files || '<li>没有文件</li>') + '</ul>' +
-        '<p class="ap-hint">文件预览需要在 AntiPrint 网站或管理 App 里打开（拓展运行在沙箱中，不能直接下载）。</p>' +
+        '<p class="ap-hint">文件预览需要在 AntiPrint 网站上打开（拓展运行在沙箱中，不能直接下载）。</p>' +
         '</section>' +
         '<div class="ap-actions wrap">' + buttons.join('') + '</div>' +
         '</main></div>'
