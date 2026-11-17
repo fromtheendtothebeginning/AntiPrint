@@ -160,8 +160,33 @@ function McpPage({ role = 'user' }: McpPageProps) {
 
   const serverCommand = tab === 'admin' ? 'antiprint-mcp' : 'antiprint-user-mcp'
 
-  /** 客户端配置：一处写命令 + 环境变量，Claude / Cursor / Trae 的字段名基本一致 */
-  const clientConfig = useMemo(
+  const localConfig = useMemo(
+    () =>
+      JSON.stringify(
+        {
+          base_url: window.location.origin,
+          token: freshToken || 'ap_在这里粘贴刚生成的令牌',
+        },
+        null,
+        2,
+      ),
+    [freshToken],
+  )
+
+  /** 一条 PowerShell 命令写入配置文件：用户复制粘贴即可，不用自己新建文件 */
+  const writeConfigCmd = useMemo(
+    () => `@'\n${localConfig}\n'@ | Set-Content -Encoding utf8 "$env:USERPROFILE\\.antiprint-mcp.json"`,
+    [localConfig],
+  )
+
+  /** 方式 A：配置写在文件里，客户端只填启动命令 */
+  const clientConfigFile = useMemo(
+    () => JSON.stringify({ mcpServers: { antiprint: { command: serverCommand } } }, null, 2),
+    [serverCommand],
+  )
+
+  /** 方式 B：不写配置文件，地址与令牌直接写在客户端 env 里 */
+  const clientConfigEnv = useMemo(
     () =>
       JSON.stringify(
         {
@@ -181,17 +206,22 @@ function McpPage({ role = 'user' }: McpPageProps) {
     [serverCommand, freshToken],
   )
 
-  const localConfig = useMemo(
+  /** 方式 C：PATH 里找不到命令时，直接用 python -m 启动模块 */
+  const clientConfigModule = useMemo(
     () =>
       JSON.stringify(
         {
-          base_url: window.location.origin,
-          token: freshToken || 'ap_在这里粘贴刚生成的令牌',
+          mcpServers: {
+            antiprint: {
+              command: 'python',
+              args: ['-m', tab === 'admin' ? 'antiprint_mcp.server' : 'antiprint_mcp.user_server'],
+            },
+          },
         },
         null,
         2,
       ),
-    [freshToken],
+    [tab],
   )
 
   const activeTokens = tokens.filter((token) => !token.revoked_at)
@@ -363,44 +393,92 @@ function McpPage({ role = 'user' }: McpPageProps) {
           </div>
         )}
 
+        <div className="mb-4 rounded-xl bg-brand/[0.07] px-4 py-3 text-xs leading-relaxed text-gray-600 dark:bg-brand/10 dark:text-gray-300">
+          <span className="font-medium text-gray-800 dark:text-gray-100">最短路径：</span>
+          生成令牌 → 复制第 2 步的 PowerShell 命令执行（自动写好配置文件）→ 把第 3 步「方式 A」的 JSON 粘进 Trae → 刷新工具列表。
+          全程不用手动新建文件。
+        </div>
+
         <div className="space-y-5">
-          <Step index={1} title="安装 MCP 服务（需要 Python 3.10+）">
+          <Step index={1} title="安装 MCP 服务（Python 3.10+，只需一次）">
             <Snippet
-              title="命令行"
+              title="命令行（Windows 用 python -m pip 也可以）"
               code={`pip install "git+https://github.com/miemiejack8899-source/antiprint.git#subdirectory=mcp"`}
             />
+            <Snippet
+              title="检查是否装好 / 命令在哪里"
+              code={`pip show antiprint-mcp
+where.exe antiprint-mcp
+where.exe antiprint-user-mcp`}
+            />
             <p className="text-xs text-gray-500 dark:text-gray-400">
-              装好后会得到两个命令：<code className="font-mono">antiprint-user-mcp</code>（用户端）和{' '}
-              <code className="font-mono">antiprint-mcp</code>（管理端）。
+              看到 <code className="font-mono">Version: 0.2.0</code> 就是装好了；
+              <code className="font-mono">where.exe</code> 输出的路径（形如{' '}
+              <code className="font-mono">C:\...\Scripts\antiprint-mcp.exe</code>）可以直接填到第 3 步的{' '}
+              <code className="font-mono">command</code>，这样最稳，不怕 PATH 找不到。
             </p>
           </Step>
 
-          <Step index={2} title="把令牌写进配置">
-            <p>二选一即可，环境变量优先于配置文件：</p>
-            <Snippet title="配置文件（Windows：C:\Users\你\.antiprint-mcp.json）" code={localConfig} />
-            <Snippet title="或者用环境变量" code={`ANTIPRINT_BASE_URL=${window.location.origin}\nANTIPRINT_TOKEN=${freshToken || 'ap_你的令牌'}`} />
+          <Step index={2} title="把令牌写进配置（二选一）">
+            <p>
+              推荐：直接复制下面这条命令，在 <strong>PowerShell</strong> 里回车。它会自动创建并写好配置文件
+              （<code className="font-mono">C:\Users\你\.antiprint-mcp.json</code>），不用自己新建文件：
+            </p>
+            <Snippet title="一条命令写入配置（PowerShell，含你的令牌）" code={writeConfigCmd} />
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              也可以手动编辑那个文件，内容就是下面这段 JSON；或者跳过这一步，改用第 3 步的「方式 B」，
+              把同样的地址与令牌写在客户端的 <code className="font-mono">env</code> 里。
+              改完不用重启 MCP，下次调用会自动读到新配置。
+            </p>
+            <Snippet title="配置文件内容（手动方式）" code={localConfig} />
           </Step>
 
           <Step index={3} title="在 AI 客户端里添加 MCP 服务">
             <p>
-              Trae：「设置 → MCP → 添加」粘贴下面的 JSON；Cursor 写进{' '}
+              Trae：「设置 → MCP → 添加」，粘贴下面的 JSON；Cursor 写进{' '}
               <code className="font-mono">~/.cursor/mcp.json</code>；Claude Desktop 写进{' '}
               <code className="font-mono">%APPDATA%\Claude\claude_desktop_config.json</code>。
             </p>
-            <Snippet title="mcpServers 配置" code={clientConfig} />
+            <p>
+              <strong>方式 A（推荐，配合第 2 步）</strong>：只填启动命令，地址与令牌从配置文件读取。
+            </p>
+            <Snippet title="mcpServers（方式 A：读配置文件）" code={clientConfigFile} />
+            <p>
+              <strong>方式 B（不写配置文件）</strong>：把地址与令牌直接写进 <code className="font-mono">env</code>。
+            </p>
+            <Snippet title="mcpServers（方式 B：env 传参）" code={clientConfigEnv} />
+            <p>
+              <strong>方式 C（PATH 里找不到命令时）</strong>：用 <code className="font-mono">python -m</code> 启动，
+              不依赖 Scripts 目录是否在 PATH 里。
+            </p>
+            <Snippet title="mcpServers（方式 C：python -m）" code={clientConfigModule} />
             <p className="text-xs text-gray-500 dark:text-gray-400">
-              Windows 上如果提示找不到命令，把 <code className="font-mono">command</code> 换成装了包的 python
-              绝对路径，参数改成 <code className="font-mono">["-m", "antiprint_mcp.{tab === 'admin' ? 'server' : 'user_server'}"]</code>。
+              Windows 提示「找不到命令」：把 <code className="font-mono">command</code> 换成第 1 步{' '}
+              <code className="font-mono">where.exe</code> 输出的绝对路径，JSON 里的反斜杠要写成{' '}
+              <code className="font-mono">\\</code>（例如{' '}
+              <code className="font-mono">"C:\\Users\\你\\AppData\\...\\antiprint-mcp.exe"</code>）。
             </p>
           </Step>
 
-          <Step index={4} title="验证">
+          <Step index={4} title="验证，并试打一单">
             <p>
               在客户端里刷新 MCP 工具列表，应该能看到{' '}
-              {tab === 'admin' ? '18' : '8'} 个以 <code className="font-mono">mcp_antiprint</code> 开头的工具。
-              然后对 AI 说：「先 whoami，再列出我的打印任务」。
+              {tab === 'admin' ? '18' : '8'} 个工具。先对 AI 说：
             </p>
-            <div className="grid gap-2 sm:grid-cols-2">
+            <Snippet
+              title="测试话术（可直接复制）"
+              code={tab === 'admin' ? '先调用 whoami 确认账号，再调用 list_jobs 看我有哪些任务。' : '先调用 whoami 确认账号，再调用 list_my_jobs 看我的任务和余额。'}
+            />
+            <p>连接正常后，再试一次提交打印（把路径换成你电脑上的真实文件）：</p>
+            <Snippet
+              title="提交打印测试"
+              code={'调用 submit_print_job，把 E:\\你的文件.pdf 打印 1 份，取件，提交后告诉我任务号和余额。'}
+            />
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              成功时返回里会有一句「任务 #xx 已提交，当前状态「待审核」，本单费用 x 元，余额 x 元」；
+              到网站「我的任务」能立刻看到这条待审核任务。
+            </p>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
               {(tab === 'admin' ? ADMIN_TOOLS : USER_TOOLS).map((tool) => (
                 <div
                   key={tool.name}
