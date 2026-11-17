@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>AntiPrint 管理 · AntiSIT 拓展安装</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 28px 20px 48px;
+    background: #f6f7f9; color: #1b1b1f;
+    font-family: -apple-system, "Noto Sans SC", "PingFang SC", "Segoe UI", system-ui, sans-serif;
+    line-height: 1.65;
+  }
+  main { max-width: 560px; margin: 0 auto; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(15,155,142,.12); color: #0f9b8e;
+    border-radius: 999px; padding: 4px 12px; font-size: 12px;
+  }
+  h1 { font-size: 24px; margin: 14px 0 6px; }
+  .sub { margin: 0 0 20px; color: #6b6b73; font-size: 14px; }
+  .card {
+    background: #fff; border-radius: 16px; padding: 18px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.05); margin-bottom: 16px;
+  }
+  .qr { display: flex; justify-content: center; padding: 6px 0 10px; }
+  .qr img { width: 220px; height: 220px; border-radius: 12px; background: #fff; }
+  .qr-note { text-align: center; color: #6b6b73; font-size: 12px; margin: 0; }
+  h2 { font-size: 15px; margin: 0 0 10px; }
+  ol { margin: 0; padding-left: 20px; }
+  li { margin: 8px 0; font-size: 14px; }
+  code {
+    background: #f1f2f4; border-radius: 6px; padding: 2px 6px;
+    font-family: ui-monospace, Consolas, monospace; font-size: 13px;
+    word-break: break-all;
+  }
+  .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
+  .row code { flex: 1 1 220px; }
+  button {
+    border: 0; border-radius: 10px; padding: 8px 14px; font: inherit;
+    background: #0f9b8e; color: #fff; font-size: 13px;
+  }
+  button:active { transform: scale(.97); }
+  .warn {
+    background: #fff7e6; color: #8a5a00; border-radius: 12px;
+    padding: 12px 14px; font-size: 13px;
+  }
+  .warn strong { color: #7a4d00; }
+  a { color: #0f9b8e; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #14151a; color: #ececf1; }
+    .card { background: #1e1f26; box-shadow: none; }
+    .sub, .qr-note, li { color: #b9b9c2; }
+    code { background: #2a2b33; color: #ececf1; }
+    .warn { background: #3a2e12; color: #f0c674; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <span class="badge">AntiSIT 拓展</span>
+  <h1>AntiPrint 管理</h1>
+  <p class="sub">在 AntiSIT 里审核打印任务、处理交接、管理用户余额与打印设置。</p>
+
+  <div class="card">
+    <div class="qr">
+      <img src="/ext/qr.png" alt="安装二维码" width="220" height="220">
+    </div>
+    <p class="qr-note">用手机相机 / AntiSIT 扫一扫打开本页</p>
+  </div>
+
+  <div class="card">
+    <h2>安装步骤</h2>
+    <ol>
+      <li>打开 <strong>AntiSIT</strong> → 底栏「拓展」→ 顶部切到「市场」</li>
+      <li>点「添加第三方源」</li>
+      <li>粘贴下面的源地址：</li>
+    </ol>
+    <div class="row">
+      <code id="src">https://print.anticraft.top/market/</code>
+      <button type="button" onclick="copyText('src', this)">复制</button>
+    </div>
+    <ol start="4">
+      <li>核对指纹是否为 <code id="fp">0062-CC99-F646</code>（一致再确认添加）</li>
+      <li>在市场列表里安装「AntiPrint 管理」，同意「本机存储 / 联网 / 通知」</li>
+      <li>打开拓展，用管理员账号登录即可</li>
+    </ol>
+  </div>
+
+  <div class="card warn">
+    <strong>为什么不直接扫码安装？</strong><br>
+    AntiSIT 当前只给「市场来源」的拓展放开联网；扫码下载或本地导入的包会被禁网，装上也连不上服务器。
+    所以必须走「市场 → 添加第三方源」这一步。
+  </div>
+
+  <div class="card">
+    <h2>备用：手动导入</h2>
+    <p class="sub" style="margin:0 0 8px">
+      只想先看看界面、暂时不连服务器的话，可以下载安装包，在「拓展 → + → 导入 Cordis 压缩包」里导入。
+    </p>
+    <a href="/market/antiprint-admin-1.0.0.zip">下载 antiprint-admin-1.0.0.zip</a>
+  </div>
+</main>
+<script>
+  function copyText(id, button) {
+    var text = document.getElementById(id).textContent.trim();
+    function done() {
+      var old = button.textContent;
+      button.textContent = '已复制';
+      setTimeout(function () { button.textContent = old; }, 1200);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, fallback);
+    } else {
+      fallback();
+    }
+    function fallback() {
+      var area = document.createElement('textarea');
+      area.value = text;
+      document.body.appendChild(area);
+      area.select();
+      try { document.execCommand('copy'); done(); } catch (e) {}
+      document.body.removeChild(area);
+    }
+  }
+</script>
+</body>
+</html>
