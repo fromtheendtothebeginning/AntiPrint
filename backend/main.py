@@ -294,11 +294,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="AntiPrint 远程打印服务", version=config.VERSION, lifespan=lifespan)
 
-# 开发期 CORS：允许 Vite(3010) 直连；生产走 nginx 同源，无需跨域
+# 开发期 CORS：允许 Vite(3010) 直连；生产走 nginx 同源，无需跨域。
+# 另外 AntiSIT 等宿主里的 Cordis 拓展从 WebView 的不透明源发起请求（Origin: null），
+# 接口用的是 Bearer 而不是 Cookie，所以这里放开来源并关闭 credentials。
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=config.CORS_ORIGINS,
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
