@@ -34,6 +34,9 @@ TABLES = {
         ("avatar", "VARCHAR(255) NULL"),
         # 账户余额（元）：计费账号提交任务时扣、驳回/撤回时退；DECIMAL 精确到分，避免浮点误差
         ("balance", "DECIMAL(10,2) NOT NULL DEFAULT 0"),
+        # 绑定手机号（短信验证通过才写入；注册必填，老账号补绑后才能提交任务）
+        ("phone", "VARCHAR(32) NULL"),
+        ("phone_verified_at", "DATETIME NULL"),
         ("created_at", "DATETIME NOT NULL"),
     ],
     "print_jobs": [
@@ -141,7 +144,7 @@ TABLES = {
 
 USER_FIELDS = (
     "id", "username", "password_hash", "role", "source", "anticraft_id",
-    "default_address", "default_delivery", "balance", "avatar", "created_at",
+    "default_address", "default_delivery", "balance", "avatar", "phone", "phone_verified_at", "created_at",
 )
 JOB_FIELDS = (
     "id", "user_id", "username", "status", "address", "note", "reject_reason", "print_error",
@@ -284,20 +287,41 @@ def _row(row, fields):
 
 # ── users ──
 
-def create_user(username, password_hash, role="user", source="local", anticraft_id=None):
+def create_user(username, password_hash, role="user", source="local", anticraft_id=None, phone=None):
     """创建用户，返回用户 dict（含 id）。
 
     source: local（AntiPrint 自建）/ anticraft（anticraft 授权绑定或密码登录自动创建）；
-    anticraft_id: anticraft 用户唯一 ID（授权码模式按它关联本地账号，用户名可改）。
+    anticraft_id: anticraft 用户唯一 ID（授权码模式按它关联本地账号，用户名可改）；
+    phone: 已通过短信验证的手机号（注册接口在调用前校验验证码）。
     """
+    phone = (phone or "").strip() or None
     with tx() as cur:
         cur.execute(
-            "INSERT INTO users (username, password_hash, role, source, anticraft_id, created_at) "
-            "VALUES (%s,%s,%s,%s,%s,NOW())",
-            (username, password_hash, role, source, anticraft_id),
+            "INSERT INTO users (username, password_hash, role, source, anticraft_id, phone, phone_verified_at, created_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,IF(%s IS NULL, NULL, NOW()),NOW())",
+            (username, password_hash, role, source, anticraft_id, phone, phone),
         )
         user_id = cur.lastrowid
     return get_user_by_id(user_id)
+
+
+def get_user_by_phone(phone):
+    """按手机号取账号（绑定唯一性校验用；空号返回 None）。"""
+    if not phone:
+        return None
+    with tx() as cur:
+        cur.execute("SELECT * FROM users WHERE phone=%s", (phone,))
+        row = cur.fetchone()
+    return _row(row, USER_FIELDS) if row else None
+
+
+def set_user_phone(user_id, phone):
+    """绑定/更换手机号（接口层已校验短信验证码）。"""
+    with tx() as cur:
+        cur.execute(
+            "UPDATE users SET phone=%s, phone_verified_at=NOW() WHERE id=%s",
+            (phone, user_id),
+        )
 
 
 def get_user_by_anticraft_id(anticraft_id):
@@ -333,7 +357,8 @@ def list_users():
     """用户列表（按注册顺序），带各自任务数与**余额**，供用户管理页使用。"""
     with tx() as cur:
         cur.execute(
-            "SELECT u.id, u.username, u.role, u.source, u.anticraft_id, u.balance, u.created_at, "
+            "SELECT u.id, u.username, u.role, u.source, u.anticraft_id, u.balance, u.phone, "
+            "  u.phone_verified_at, u.created_at, "
             "  (SELECT COUNT(*) FROM print_jobs j WHERE j.user_id = u.id) AS job_count "
             "FROM users u ORDER BY u.id"
         )

@@ -8,6 +8,10 @@ export interface User {
   role: Role
   /** 账号来源（如 anticraft）；早期本地账号可能没有该字段 */
   source?: string
+  /** 已绑定的手机号（11 位，空串 = 未绑定） */
+  phone?: string
+  /** 手机号是否已通过短信验证；未验证的账号不能提交任务/充值 */
+  phone_verified?: boolean
 }
 
 /** 配送方式：用户提交时选（默认取用户配置），决定打印完成后进「待配送」还是「待取件」 */
@@ -103,6 +107,10 @@ export interface Profile {
   price: string
   /** 头像文件名（空串 = 没设置，用首字母占位） */
   avatar: string
+  /** 已绑定手机号（空串 = 未绑定） */
+  phone: string
+  /** 手机号是否已通过短信验证 */
+  phone_verified: boolean
 }
 
 /** 余额流水（扣费/退费/管理员调账） */
@@ -210,6 +218,10 @@ export interface AdminUserRow {
   job_count: number
   /** 账户余额（元） */
   balance: number | string
+  /** 已绑定手机号（空/缺省 = 未绑定） */
+  phone?: string | null
+  /** 手机号验证时间（空 = 未验证） */
+  phone_verified_at?: string | null
 }
 
 /** API 文档页（管理员可在页面上直接改，正文是 Markdown） */

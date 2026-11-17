@@ -42,6 +42,7 @@ import api_docs
 import downloads
 import payments
 import realtime
+import sms
 import agent_api
 from agent_api import router as agent_router
 
@@ -101,7 +102,26 @@ def _public_user(user: dict) -> dict:
         "username": user["username"],
         "role": user["role"],
         "source": user.get("source") or "local",
+        "phone": user.get("phone") or "",
+        "phone_verified": bool(user.get("phone_verified_at")),
     }
+
+
+def _optional_user(request: Request) -> dict | None:
+    """可选登录：发短信验证码时 register 场景不需要登录，bind 场景需要。"""
+    header = request.headers.get("Authorization", "")
+    token = header[7:].strip() if header.lower().startswith("bearer ") else ""
+    return auth.user_from_token(token) if token else None
+
+
+def _require_phone(user: dict, action: str):
+    """未绑定手机号（或未通过短信验证）的账号不能做关键操作。"""
+    row = db.get_user_by_id(user["id"]) or {}
+    if not row.get("phone") or not row.get("phone_verified_at"):
+        raise HTTPException(status_code=403, detail={
+            "code": "phone_required",
+            "message": f"请先绑定手机号并完成短信验证，才能{action}",
+        })
 
 
 # ── anticraft（anticraft.top）账号对接 ──
@@ -321,6 +341,19 @@ async def security_headers(request: Request, call_next):
 class RegisterBody(BaseModel):
     username: str = ""
     password: str = ""
+    phone: str = ""
+    code: str = ""
+
+
+class SmsCodeBody(BaseModel):
+    phone: str = ""
+    # register = 注册前发码（不需要登录）；bind = 已登录用户绑定/更换手机号
+    scene: str = "register"
+
+
+class BindPhoneBody(BaseModel):
+    phone: str = ""
+    code: str = ""
 
 
 class LoginBody(BaseModel):
@@ -382,12 +415,59 @@ def register(body: RegisterBody):
         raise HTTPException(status_code=400, detail="密码至少 6 位")
     if db.get_user_by_name(username):
         raise HTTPException(status_code=400, detail="用户名已被占用")
+    phone = sms.normalize_phone(body.phone)
+    if not phone:
+        raise HTTPException(status_code=400, detail="请填写正确的 11 位手机号")
+    if db.get_user_by_phone(phone):
+        raise HTTPException(status_code=409, detail="该手机号已绑定其他账号")
+    if not sms.verify_code(phone, body.code):
+        raise HTTPException(status_code=400, detail="短信验证码不正确或已过期，请重新获取")
     try:
-        user = db.create_user(username, auth.hash_password(body.password), "user")
+        user = db.create_user(username, auth.hash_password(body.password), "user", phone=phone)
     except pymysql.err.IntegrityError:
         raise HTTPException(status_code=400, detail="用户名已被占用")
-    logger.info("新用户注册：%s", username)
+    logger.info("新用户注册：%s（手机号 %s）", username, _mask_phone(phone))
     return {"token": auth.create_token(user), "user": _public_user(user)}
+
+
+def _mask_phone(phone: str) -> str:
+    """日志脱敏：138****1234"""
+    text = str(phone or "")
+    return text[:3] + "****" + text[-4:] if len(text) == 11 else text
+
+
+@app.post("/api/sms/code")
+def send_sms_code(body: SmsCodeBody, request: Request):
+    """发送短信验证码：注册（未登录）或绑定手机号（已登录）。"""
+    phone = sms.normalize_phone(body.phone)
+    if not phone:
+        raise HTTPException(status_code=400, detail="请填写正确的 11 位手机号")
+    scene = (body.scene or "register").strip()
+    owner = db.get_user_by_phone(phone)
+    if scene == "register":
+        if owner:
+            raise HTTPException(status_code=409, detail="该手机号已绑定其他账号，请直接登录")
+    elif scene == "bind":
+        user = _optional_user(request)
+        if not user:
+            raise HTTPException(status_code=401, detail="请先登录后再绑定手机号")
+        if owner and owner["id"] != user["id"]:
+            raise HTTPException(status_code=409, detail="该手机号已被其他账号绑定")
+    else:
+        raise HTTPException(status_code=400, detail="scene 只能是 register 或 bind")
+    try:
+        mocked = sms.issue_code(phone, _client_ip(request))
+    except RuntimeError as exc:
+        message = str(exc)
+        code = 429 if ("频繁" in message or "上限" in message) else 503
+        raise HTTPException(status_code=code, detail=message)
+    logger.info("发送短信验证码：%s（scene=%s，mock=%s）", _mask_phone(phone), scene, mocked)
+    return {
+        "ok": True,
+        "mock": mocked,
+        "expires_in": sms.CODE_TTL_SECONDS,
+        "notice": "当前是测试模式：验证码已打印在服务器日志里" if mocked else "验证码已发送",
+    }
 
 
 @app.post("/api/login")
@@ -478,6 +558,9 @@ def _profile_payload(user: dict) -> dict:
         "balance": row.get("balance") or 0,
         # 头像文件名（空 = 前端用首字母占位）；前端用 /api/users/{id}/avatar 取图
         "avatar": row.get("avatar") or "",
+        # 手机号（本人可见完整；管理端用户列表也能看到）
+        "phone": row.get("phone") or "",
+        "phone_verified": bool(row.get("phone_verified_at")),
         "billable": not billing.is_free(row),
         "free_reason": billing.free_reason(row),
         "price": billing.price_text(),
@@ -506,6 +589,22 @@ def update_profile(body: ProfileBody, user: dict = Depends(auth.get_current_user
             raise HTTPException(status_code=400, detail="默认配送方式只能是「配送」或「取件」")
     db.set_user_profile(user["id"], address, mode)
     logger.info("用户 %s 更新配置（默认配送方式=%s）", user["username"], mode)
+    return {"profile": _profile_payload(user)}
+
+
+@app.post("/api/profile/phone")
+def bind_phone(body: BindPhoneBody, user: dict = Depends(auth.get_current_user)):
+    """绑定/更换手机号：必须通过短信验证码，且一个手机号只能绑一个账号。"""
+    phone = sms.normalize_phone(body.phone)
+    if not phone:
+        raise HTTPException(status_code=400, detail="请填写正确的 11 位手机号")
+    if not sms.verify_code(phone, body.code):
+        raise HTTPException(status_code=400, detail="短信验证码不正确或已过期，请重新获取")
+    owner = db.get_user_by_phone(phone)
+    if owner and owner["id"] != user["id"]:
+        raise HTTPException(status_code=409, detail="该手机号已被其他账号绑定")
+    db.set_user_phone(user["id"], phone)
+    logger.info("用户 %s 绑定手机号 %s", user["username"], _mask_phone(phone))
     return {"profile": _profile_payload(user)}
 
 
@@ -592,6 +691,7 @@ def pay_config():
 @app.post("/api/pay/recharge")
 def create_recharge(body: RechargeBody, user: dict = Depends(auth.get_current_user)):
     """创建充值订单并返回支付宝收银台地址（mock 模式返回本地模拟页）。"""
+    _require_phone(user, "充值")
     if not payments.is_enabled():
         raise HTTPException(status_code=503, detail="充值暂未开放")
     try:
@@ -862,6 +962,8 @@ def list_users(user: dict = Depends(auth.require_admin)):
                 "source": row.get("source") or "local",
                 "anticraft_id": row.get("anticraft_id"),
                 "balance": row.get("balance") or 0,
+                "phone": row.get("phone") or "",
+                "phone_verified_at": row.get("phone_verified_at"),
                 "created_at": row.get("created_at"),
                 "job_count": row.get("job_count") or 0,
             }
@@ -1269,6 +1371,7 @@ def create_job(
     delivery_mode 为空时取用户配置里的 default_delivery（默认「配送」）。
     pay_mode: balance = 余额支付（默认）；instant = 即时付款（支付宝，支付成功后才进审核）。
     """
+    _require_phone(user, "提交打印任务")
     pay_mode = (pay_mode or "balance").strip().lower()
     if pay_mode not in ("balance", "instant"):
         raise HTTPException(status_code=400, detail="支付方式只能是余额支付或即时付款")
@@ -1566,6 +1669,7 @@ def job_detail(job_id: int, user: dict = Depends(auth.get_current_user)):
 @app.post("/api/jobs/{job_id}/pay")
 def pay_job(job_id: int, user: dict = Depends(auth.get_current_user)):
     """为「待支付」的即时付款任务重新获取收银台地址（从「我的任务」继续支付）。"""
+    _require_phone(user, "支付打印任务")
     job = _load_job_for(job_id, user)
     if job["status"] != constants.S_UNPAID:
         raise HTTPException(status_code=400, detail=f"当前状态「{job['status']}」不需要支付")

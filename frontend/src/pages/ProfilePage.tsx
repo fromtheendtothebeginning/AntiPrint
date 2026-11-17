@@ -11,6 +11,7 @@ import {
   Loader2,
   MapPin,
   PackageCheck,
+  Phone,
   RefreshCw,
   Save,
   ShieldCheck,
@@ -156,6 +157,15 @@ function ProfilePage() {
     }
   }, [loadAvatar])
 
+  // 手机号绑定（提交任务/充值前必须完成）
+  const [bindPhoneValue, setBindPhoneValue] = useState('')
+  const [bindCode, setBindCode] = useState('')
+  const [bindBusy, setBindBusy] = useState(false)
+  const [bindSmsBusy, setBindSmsBusy] = useState(false)
+  const [bindCountdown, setBindCountdown] = useState(0)
+  const [phoneError, setPhoneError] = useState('')
+  const [phoneNotice, setPhoneNotice] = useState('')
+
   // 默认配送配置表单（两块共用一个保存按钮）
   const [address, setAddress] = useState('')
   const [delivery, setDelivery] = useState<DeliveryMode>(DELIVER)
@@ -218,6 +228,61 @@ function ProfilePage() {
     }, NOTICE_MS)
     return () => window.clearTimeout(timer)
   }, [saveNotice, bindNotice])
+
+  // 发送验证码后的 60 秒倒计时
+  useEffect(() => {
+    if (bindCountdown <= 0) return
+    const timer = window.setTimeout(() => setBindCountdown((value) => value - 1), 1000)
+    return () => window.clearTimeout(timer)
+  }, [bindCountdown])
+
+  /** 发送绑定手机号的验证码 */
+  async function sendBindCode() {
+    const value = bindPhoneValue.trim()
+    if (!/^1[3-9]\d{9}$/.test(value)) {
+      setPhoneError('请填写正确的 11 位手机号')
+      return
+    }
+    setBindSmsBusy(true)
+    setPhoneError('')
+    setPhoneNotice('')
+    try {
+      const result = await api.sendSmsCode(value, 'bind')
+      setBindCountdown(60)
+      setPhoneNotice(result.notice)
+    } catch (err) {
+      setPhoneError(getErrorMessage(err))
+    } finally {
+      setBindSmsBusy(false)
+    }
+  }
+
+  /** 提交手机号 + 验证码完成绑定/更换 */
+  async function handleBindPhone() {
+    const value = bindPhoneValue.trim()
+    if (!/^1[3-9]\d{9}$/.test(value)) {
+      setPhoneError('请填写正确的 11 位手机号')
+      return
+    }
+    if (!/^\d{6}$/.test(bindCode.trim())) {
+      setPhoneError('请填写 6 位短信验证码')
+      return
+    }
+    setBindBusy(true)
+    setPhoneError('')
+    setPhoneNotice('')
+    try {
+      const data = await api.bindPhone(value, bindCode.trim())
+      setProfile(data)
+      setBindPhoneValue('')
+      setBindCode('')
+      setPhoneNotice('手机号已绑定并验证')
+    } catch (err) {
+      setPhoneError(getErrorMessage(err))
+    } finally {
+      setBindBusy(false)
+    }
+  }
 
   async function handleSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -376,6 +441,91 @@ function ProfilePage() {
                 }}
               />
             </div>
+          </div>
+        </section>
+
+        {/* 手机号：提交打印任务、充值前必须绑定并通过短信验证 */}
+        <section className={CARD}>
+          <SectionHeader
+            Icon={Phone}
+            title="手机号"
+            subtitle="提交打印任务与充值前必须绑定并通过短信验证"
+            tone={
+              profile.phone_verified
+                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                : 'bg-red-500/10 text-red-500'
+            }
+          />
+
+          {profile.phone_verified ? (
+            <p className={ALERT_OK}>
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>
+                已绑定：{profile.phone}
+                <span className="mt-1 block text-xs opacity-80">需要更换手机号？在下面验证一个新号码即可</span>
+              </span>
+            </p>
+          ) : (
+            <p className={ALERT_WARN}>
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>尚未绑定手机号：当前无法提交打印任务、充值或支付，请先完成绑定。</span>
+            </p>
+          )}
+
+          <div className="mt-4 space-y-3">
+            <TextField
+              label="手机号"
+              value={bindPhoneValue}
+              placeholder="11 位手机号"
+              disabled={bindBusy}
+              onChange={(event) => setBindPhoneValue(event.target.value)}
+            />
+            <div className="flex items-end gap-2">
+              <div className="min-w-0 flex-1">
+                <TextField
+                  label="短信验证码"
+                  value={bindCode}
+                  placeholder="6 位验证码"
+                  disabled={bindBusy}
+                  onChange={(event) => setBindCode(event.target.value)}
+                />
+              </div>
+              <button
+                type="button"
+                className={`${BTN_SECONDARY} mb-0.5 shrink-0`}
+                disabled={bindBusy || bindSmsBusy || bindCountdown > 0}
+                onClick={() => void sendBindCode()}
+              >
+                {bindCountdown > 0 ? `${bindCountdown}s` : bindSmsBusy ? '发送中…' : '发送验证码'}
+              </button>
+            </div>
+
+            {phoneError && (
+              <p className={ALERT_ERROR}>
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{phoneError}</span>
+              </p>
+            )}
+            {phoneNotice && (
+              <p role="status" className={ALERT_OK}>
+                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{phoneNotice}</span>
+              </p>
+            )}
+
+            <button type="button" className={BTN_PRIMARY} disabled={bindBusy} onClick={() => void handleBindPhone()}>
+              {bindBusy ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  绑定中…
+                </>
+              ) : (
+                <>
+                  <Phone className="h-4 w-4" />
+                  {profile.phone_verified ? '更换手机号' : '绑定手机号'}
+                </>
+              )}
+            </button>
           </div>
         </section>
 

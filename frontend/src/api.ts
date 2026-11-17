@@ -226,15 +226,50 @@ export function getErrorMessage(error: unknown): string {
   return '操作失败，请稍后重试'
 }
 
+/** 是否被后端「未绑定手机号」拦下（403 + detail.code=phone_required） */
+export function isPhoneRequired(error: unknown): boolean {
+  if (!(error instanceof ApiError) || error.status !== 403) return false
+  const detail = error.detail as { code?: string } | null
+  return Boolean(detail && detail.code === 'phone_required')
+}
+
 export const api = {
   /** 登录：成功返回令牌与用户信息；失败后端返回 401 中文提示 */
   async login(username: string, password: string): Promise<{ token: string; user: User }> {
     return request<{ token: string; user: User }>('/api/login', { method: 'POST', body: { username, password } })
   },
 
-  /** 注册：成功后直接返回令牌与用户信息，相当于自动登录 */
-  async register(username: string, password: string): Promise<{ token: string; user: User }> {
-    return request<{ token: string; user: User }>('/api/register', { method: 'POST', body: { username, password } })
+  /** 注册：手机号必须通过短信验证码；成功后直接返回令牌与用户信息，相当于自动登录 */
+  async register(
+    username: string,
+    password: string,
+    phone: string,
+    code: string,
+  ): Promise<{ token: string; user: User }> {
+    return request<{ token: string; user: User }>('/api/register', {
+      method: 'POST',
+      body: { username, password, phone, code },
+    })
+  },
+
+  /** 发送短信验证码：scene=register（未登录）或 bind（已登录绑定/更换手机号） */
+  async sendSmsCode(
+    phone: string,
+    scene: 'register' | 'bind',
+  ): Promise<{ ok: boolean; mock: boolean; expires_in: number; notice: string }> {
+    return request<{ ok: boolean; mock: boolean; expires_in: number; notice: string }>('/api/sms/code', {
+      method: 'POST',
+      body: { phone, scene },
+    })
+  },
+
+  /** 绑定/更换手机号（需要短信验证码） */
+  async bindPhone(phone: string, code: string): Promise<Profile> {
+    const data = await request<{ profile: Profile }>('/api/profile/phone', {
+      method: 'POST',
+      body: { phone, code },
+    })
+    return data.profile
   },
 
   /**

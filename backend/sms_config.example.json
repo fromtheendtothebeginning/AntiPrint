@@ -1,0 +1,9 @@
+{
+  "enabled": false,
+  "mock": true,
+  "access_key_id": "",
+  "access_key_secret": "",
+  "sign_name": "",
+  "template_code": "",
+  "region": "cn-hangzhou"
+}

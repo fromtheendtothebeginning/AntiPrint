@@ -30,9 +30,20 @@ function LoginPage({ onLogin }: LoginPageProps) {
   const [tab, setTab] = useState<Tab>('login')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [phone, setPhone] = useState('')
+  const [smsCode, setSmsCode] = useState('')
+  const [smsBusy, setSmsBusy] = useState(false)
+  const [countdown, setCountdown] = useState(0)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [loading, setLoading] = useState(false)
+
+  // 发送验证码后的 60 秒倒计时
+  useEffect(() => {
+    if (countdown <= 0) return
+    const timer = window.setTimeout(() => setCountdown((value) => value - 1), 1000)
+    return () => window.clearTimeout(timer)
+  }, [countdown])
   /** null 表示状态未知（加载中或查询失败），此时不拦截跳转，由后端给出提示 */
   const [oauthStatus, setOauthStatus] = useState<AnticraftOauthStatus | null>(null)
 
@@ -76,6 +87,14 @@ function LoginPage({ onLogin }: LoginPageProps) {
         setError('密码至少 6 位')
         return
       }
+      if (!/^1[3-9]\d{9}$/.test(phone.trim())) {
+        setError('请填写正确的 11 位手机号')
+        return
+      }
+      if (!/^\d{6}$/.test(smsCode.trim())) {
+        setError('请填写 6 位短信验证码')
+        return
+      }
     }
 
     setLoading(true)
@@ -87,7 +106,9 @@ function LoginPage({ onLogin }: LoginPageProps) {
         result = data
         autoRegistered = data.auto_registered
       } else {
-        result = tab === 'login' ? await api.login(name, password) : await api.register(name, password)
+        result = tab === 'login'
+          ? await api.login(name, password)
+          : await api.register(name, password, phone.trim(), smsCode.trim())
       }
       setToken(result.token)
       setUser(result.user)
@@ -106,6 +127,27 @@ function LoginPage({ onLogin }: LoginPageProps) {
       setError(getErrorMessage(err))
     } finally {
       setLoading(false)
+    }
+  }
+
+  /** 注册前发送短信验证码 */
+  async function sendCode() {
+    const value = phone.trim()
+    if (!/^1[3-9]\d{9}$/.test(value)) {
+      setError('请填写正确的 11 位手机号')
+      return
+    }
+    setSmsBusy(true)
+    setError('')
+    setNotice('')
+    try {
+      const result = await api.sendSmsCode(value, 'register')
+      setCountdown(60)
+      setNotice(result.notice)
+    } catch (err) {
+      setError(getErrorMessage(err))
+    } finally {
+      setSmsBusy(false)
     }
   }
 
@@ -238,6 +280,42 @@ function LoginPage({ onLogin }: LoginPageProps) {
             disabled={loading}
             onChange={(event) => setPassword(event.target.value)}
           />
+
+          {tab === 'register' && (
+            <>
+              <TextField
+                label="手机号"
+                id="login-phone"
+                name="phone"
+                value={phone}
+                autoComplete="tel"
+                placeholder="11 位手机号（需短信验证）"
+                disabled={loading}
+                onChange={(event) => setPhone(event.target.value)}
+              />
+              <div className="flex items-end gap-2">
+                <div className="min-w-0 flex-1">
+                  <TextField
+                    label="短信验证码"
+                    id="login-sms-code"
+                    name="code"
+                    value={smsCode}
+                    placeholder="6 位验证码"
+                    disabled={loading}
+                    onChange={(event) => setSmsCode(event.target.value)}
+                  />
+                </div>
+                <button
+                  type="button"
+                  className="mb-0.5 shrink-0 rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-brand shadow-lg shadow-black/5 transition-all duration-200 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white/5"
+                  disabled={loading || smsBusy || countdown > 0}
+                  onClick={() => void sendCode()}
+                >
+                  {countdown > 0 ? `${countdown}s` : smsBusy ? '发送中…' : '发送验证码'}
+                </button>
+              </div>
+            </>
+          )}
 
           {error && (
             <p

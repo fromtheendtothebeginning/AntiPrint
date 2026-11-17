@@ -359,6 +359,7 @@ function UsersPage() {
                   <th className={TH}>用户名</th>
                   <th className={TH}>角色</th>
                   <th className={TH}>账号来源</th>
+                  <th className={TH}>手机号</th>
                   <th className={TH}>anticraft 绑定</th>
                   <th className={TH}>余额</th>
                   <th className={TH}>任务数</th>
@@ -400,6 +401,13 @@ function UsersPage() {
                         </span>
                       </td>
                       <td className={TD}>{row.source === 'anticraft' ? 'anticraft' : '本站注册'}</td>
+                      <td className={TD}>
+                        {row.phone ? (
+                          <span className="whitespace-nowrap font-mono text-xs text-gray-600 dark:text-gray-300">{row.phone}</span>
+                        ) : (
+                          <span className="text-xs text-red-500">未绑定</span>
+                        )}
+                      </td>
                       <td className={TD}>
                         {row.anticraft_id ? (
                           <span className="text-gray-500 dark:text-gray-400">已绑定（ID {row.anticraft_id}）</span>
