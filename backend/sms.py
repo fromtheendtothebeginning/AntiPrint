@@ -1,8 +1,12 @@
-# sms.py — 短信验证码（阿里云短信）与频控
+# sms.py — 短信验证码（阿里云）与频控
+#
+# 两种阿里云产品都能用，由配置里的 provider 决定：
+#   provider = "dypns"（短信认证服务，个人实名即可用，系统赠送签名+模板，推荐）
+#   provider = "dysms"（短信服务，需要自己的签名与模板，企业资质）
 #
 # 配置读 backend/sms_config.json（已 gitignore），环境变量可覆盖：
-#   SMS_ENABLED / SMS_MOCK / SMS_ACCESS_KEY_ID / SMS_ACCESS_KEY_SECRET
-#   SMS_SIGN_NAME / SMS_TEMPLATE_CODE / SMS_REGION
+#   SMS_ENABLED / SMS_MOCK / SMS_PROVIDER
+#   SMS_ACCESS_KEY_ID / SMS_ACCESS_KEY_SECRET / SMS_SIGN_NAME / SMS_TEMPLATE_CODE / SMS_REGION
 #
 # 未配置或 mock 模式时不真的发短信，只在日志里打印验证码（本地联调用）。
 
@@ -28,11 +32,26 @@ import config
 LOG = logging.getLogger("antiprint.sms")
 
 CONFIG_FILE = config.BASE_DIR / "sms_config.json"
-CODE_TTL_SECONDS = 10 * 60          # 验证码 10 分钟有效
+CODE_TTL_SECONDS = 10 * 60          # 验证码 10 分钟有效（dypns 由阿里云控制，默认 5 分钟）
 RESEND_SECONDS = 60                 # 同一手机号 60 秒内只能发一次
 DAILY_PER_PHONE = 10                # 每个手机号每天最多 10 条
 DAILY_PER_IP = 50                   # 每个 IP 每天最多 50 条
 MAX_ATTEMPTS = 5                    # 同一条验证码最多试 5 次
+
+PROVIDER_DYSMS = "dysms"
+PROVIDER_DYPNS = "dypns"
+DYPNS_ENDPOINT = "https://dypnsapi.aliyuncs.com/"
+DYPNS_VERSION = "2017-05-25"
+DYPNS_VALID_SECONDS = 300           # 短信认证服务的验证码有效期（与模板里的 5 分钟一致）
+
+# 短信认证服务的常见错误码翻成人话（main.py 会把含「频繁 / 上限」的映射成 429）
+DYPNS_ERRORS = {
+    "FREQUENCY_FAIL": "发送太频繁，请稍后再试",
+    "BUSINESS_LIMIT_CONTROL": "该手机号今日发送次数已达上限",
+    "MOBILE_NUMBER_ILLEGAL": "手机号格式不正确",
+    "FUNCTION_NOT_OPENED": "短信认证服务未开通，请先在阿里云控制台开通",
+    "INVALID_PARAMETERS": "短信参数不正确（请检查赠送签名与模板编号）",
+}
 
 PHONE_RE = re.compile(r"^1[3-9]\d{9}$")
 _PHONE_FIX = re.compile(r"[\s\-()]")
@@ -65,6 +84,7 @@ def load_config() -> dict:
     cfg = {
         "enabled": _truthy(os.environ.get("SMS_ENABLED", raw.get("enabled", False))),
         "mock": _truthy(os.environ.get("SMS_MOCK", raw.get("mock", True))),
+        "provider": str(os.environ.get("SMS_PROVIDER") or raw.get("provider") or PROVIDER_DYSMS).strip().lower(),
         "access_key_id": str(os.environ.get("SMS_ACCESS_KEY_ID") or raw.get("access_key_id") or "").strip(),
         "access_key_secret": str(os.environ.get("SMS_ACCESS_KEY_SECRET") or raw.get("access_key_secret") or "").strip(),
         "sign_name": str(os.environ.get("SMS_SIGN_NAME") or raw.get("sign_name") or "").strip(),
@@ -75,7 +95,7 @@ def load_config() -> dict:
 
 
 def is_ready() -> bool:
-    """是否真的能发短信（关闭 mock 且四项凭据齐全）。"""
+    """是否真的能发短信（mock 之外要求 enabled + 四项凭据齐全）。"""
     cfg = load_config()
     if cfg["mock"]:
         return True
@@ -85,8 +105,39 @@ def is_ready() -> bool:
     )
 
 
-def _aliyun_send(cfg: dict, phone: str, code: str):
-    """阿里云 Dysmsapi SendSms（RPC 签名，GET，标准库实现，不引 SDK）。"""
+# ── 阿里云 RPC 公共签名（短信服务 dysmsapi 与短信认证 dypnsapi 共用）──
+
+def _rpc_sign(secret: str, params: dict) -> str:
+    """阿里云 RPC 签名（HMAC-SHA1，SignatureVersion 1.0），返回可直接拼到 URL 的 query。"""
+    def enc(value) -> str:
+        return urllib.parse.quote(str(value), safe="~")
+
+    canonical = "&".join(f"{enc(key)}={enc(params[key])}" for key in sorted(params))
+    string_to_sign = "GET&%2F&" + enc(canonical)
+    signature = base64.b64encode(
+        hmac.new((secret + "&").encode(), string_to_sign.encode(), hashlib.sha1).digest()
+    ).decode()
+    return canonical + "&Signature=" + enc(signature)
+
+
+def _rpc_get(endpoint: str, params: dict, secret: str) -> dict:
+    """调用阿里云 RPC 接口并解析 JSON；网络 / 解析错误抛中文 RuntimeError。"""
+    request = urllib.request.Request(
+        endpoint + "?" + _rpc_sign(secret, params), headers={"Accept": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=12) as response:
+            body = response.read().decode("utf-8", "replace")
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"短信网关不可达：{exc}")
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError:
+        raise RuntimeError("短信网关返回了无法解析的内容")
+
+
+def _dysms_send(cfg: dict, phone: str, code: str):
+    """短信服务（dysmsapi）：用自己申请的签名 + 模板发验证码。"""
     params = {
         "AccessKeyId": cfg["access_key_id"],
         "Action": "SendSms",
@@ -102,29 +153,60 @@ def _aliyun_send(cfg: dict, phone: str, code: str):
         "Timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "Version": "2017-05-25",
     }
-
-    def enc(value) -> str:
-        return urllib.parse.quote(str(value), safe="~")
-
-    canonical = "&".join(f"{enc(key)}={enc(params[key])}" for key in sorted(params))
-    string_to_sign = "GET&%2F&" + enc(canonical)
-    signature = base64.b64encode(
-        hmac.new((cfg["access_key_secret"] + "&").encode(), string_to_sign.encode(), hashlib.sha1).digest()
-    ).decode()
-    url = f"https://dysmsapi.aliyuncs.com/?Signature={enc(signature)}&{canonical}"
-
-    request = urllib.request.Request(url, headers={"Accept": "application/json"})
-    try:
-        with urllib.request.urlopen(request, timeout=12) as response:
-            body = response.read().decode("utf-8", "replace")
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"短信网关不可达：{exc}")
-    try:
-        data = json.loads(body)
-    except json.JSONDecodeError:
-        raise RuntimeError("短信网关返回了无法解析的内容")
+    data = _rpc_get("https://dysmsapi.aliyuncs.com/", params, cfg["access_key_secret"])
     if data.get("Code") != "OK":
         raise RuntimeError(f"短信发送失败：{data.get('Message') or data.get('Code')}")
+
+
+def _dypns_call(cfg: dict, action: str, extra: dict) -> dict:
+    """号码认证服务（dypnsapi）通用调用：返回 Code=OK 的响应，否则抛中文错误。"""
+    params = {
+        "AccessKeyId": cfg["access_key_id"],
+        "Action": action,
+        "Format": "JSON",
+        "SignatureMethod": "HMAC-SHA1",
+        "SignatureNonce": uuid.uuid4().hex,
+        "SignatureVersion": "1.0",
+        "Timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "Version": DYPNS_VERSION,
+    }
+    params.update(extra)
+    data = _rpc_get(DYPNS_ENDPOINT, params, cfg["access_key_secret"])
+    name = str(data.get("Code") or "")
+    if name != "OK":
+        message = DYPNS_ERRORS.get(name) or data.get("Message") or name or "未知错误"
+        raise RuntimeError(f"短信服务返回错误：{message}")
+    return data
+
+
+def _dypns_send(cfg: dict, phone: str):
+    """短信认证服务：赠送签名 + 赠送模板，验证码由阿里云生成并校验。"""
+    _dypns_call(cfg, "SendSmsVerifyCode", {
+        "PhoneNumber": phone,
+        "SignName": cfg["sign_name"],
+        "TemplateCode": cfg["template_code"],
+        # ##code## 交给阿里云生成，min 与模板文案里的「几分钟内有效」对应
+        "TemplateParam": json.dumps({"code": "##code##", "min": "5"}, separators=(",", ":")),
+        "CodeLength": 6,
+        "CodeType": 1,
+        "ValidTime": DYPNS_VALID_SECONDS,
+        "Interval": RESEND_SECONDS,
+        "DuplicatePolicy": 1,
+        "CountryCode": "86",
+    })
+
+
+def _dypns_verify(cfg: dict, phone: str, code: str) -> bool:
+    try:
+        data = _dypns_call(cfg, "CheckSmsVerifyCode", {
+            "PhoneNumber": phone,
+            "VerifyCode": code,
+            "CountryCode": "86",
+        })
+    except RuntimeError as exc:
+        LOG.warning("短信验证码核验失败（%s）：%s", phone, exc)
+        return False
+    return str((data.get("Model") or {}).get("VerifyResult") or "") == "PASS"
 
 
 def send_code(phone: str, code: str) -> dict:
@@ -135,7 +217,10 @@ def send_code(phone: str, code: str) -> dict:
         return {"mock": True}
     if not is_ready():
         raise RuntimeError("短信服务尚未配置（需要 AccessKey、签名与模板）")
-    _aliyun_send(cfg, phone, code)
+    if cfg["provider"] == PROVIDER_DYPNS:
+        _dypns_send(cfg, phone)
+    else:
+        _dysms_send(cfg, phone, code)
     return {"mock": False}
 
 
@@ -187,7 +272,10 @@ def issue_code(phone: str, ip: str = "") -> bool:
 
 
 def verify_code(phone: str, code: str) -> bool:
-    """校验验证码；成功后立即作废。"""
+    """校验验证码；成功后立即作废（dypns 交给阿里云校验，本地不留验证码）。"""
+    cfg = load_config()
+    if cfg["provider"] == PROVIDER_DYPNS and not cfg["mock"]:
+        return _dypns_verify(cfg, phone, code)
     with _LOCK:
         entry = _CODES.get(phone)
         if not entry:
