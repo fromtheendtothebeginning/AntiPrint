@@ -47,6 +47,7 @@ DYPNS_VALID_SECONDS = 300           # 短信认证服务的验证码有效期（
 # 短信认证服务的常见错误码翻成人话（main.py 会把含「频繁 / 上限」的映射成 429）
 DYPNS_ERRORS = {
     "FREQUENCY_FAIL": "发送太频繁，请稍后再试",
+    "biz.FREQUENCY": "发送太频繁，请稍后再试",
     "BUSINESS_LIMIT_CONTROL": "该手机号今日发送次数已达上限",
     "MOBILE_NUMBER_ILLEGAL": "手机号格式不正确",
     "FUNCTION_NOT_OPENED": "短信认证服务未开通，请先在阿里云控制台开通",
