@@ -395,8 +395,8 @@ function McpPage({ role = 'user' }: McpPageProps) {
 
         <div className="mb-4 rounded-xl bg-brand/[0.07] px-4 py-3 text-xs leading-relaxed text-gray-600 dark:bg-brand/10 dark:text-gray-300">
           <span className="font-medium text-gray-800 dark:text-gray-100">最短路径：</span>
-          生成令牌 → 复制第 2 步的 PowerShell 命令执行（自动写好配置文件）→ 把第 3 步「方式 A」的 JSON 粘进 Trae → 刷新工具列表。
-          全程不用手动新建文件。
+          第 1 步安装（只需一次）→ 在上方生成令牌 → 复制第 2 步的 PowerShell 命令执行（自动写好配置文件）→
+          把第 3 步「方式 A」的 JSON 粘进 Trae → 刷新工具列表。装好之后不用手动新建任何文件。
         </div>
 
         <div className="space-y-5">
