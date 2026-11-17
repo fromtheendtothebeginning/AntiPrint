@@ -15,6 +15,7 @@ import {
   FileText,
   LoaderCircle,
   MousePointerClick,
+  Plug,
   Printer,
   QrCode,
   Store,
@@ -869,7 +870,8 @@ function SubmitPage() {
 
   // ── 第 1 步：打印文件与设置 ──
   return (
-    <div className="grid items-start gap-5 lg:grid-cols-2">
+    <div className="space-y-5">
+      <div className="grid items-start gap-5 lg:grid-cols-2">
       {/* 左栏：上传区 + 文件行列表（点行即选中，右侧设置与预览跟着切换） */}
       <section className="rounded-2xl bg-white p-4 shadow-xl shadow-black/[0.04] sm:p-6 dark:bg-ink-soft">
         <div className="mb-4 flex items-center gap-3">
@@ -1132,6 +1134,27 @@ function SubmitPage() {
             <p className="text-center text-xs text-gray-400">请先选择要打印的文件</p>
           )}
         </div>
+      </section>
+      </div>
+
+      {/* MCP 入口：登录后的首页就能看到，点进去是完整教程（用户端 / 管理端） */}
+      <section className="flex flex-col items-start gap-3 rounded-2xl border border-brand/20 bg-brand/[0.06] p-4 sm:flex-row sm:items-center sm:p-5 dark:border-brand/25 dark:bg-brand/10">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand/15 text-brand">
+          <Plug className="h-5 w-5" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-gray-800 dark:text-gray-100">用 AI 客户端打印（MCP）</p>
+          <p className="mt-0.5 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+            在 Trae / Cursor / Claude 里接上 AntiPrint，直接说「把 D:\a.pdf 打印一份，取件」；也能查我的任务、余额与充值。用户端和管理端都有教程。
+          </p>
+        </div>
+        <Link
+          to="/mcp"
+          className="inline-flex shrink-0 items-center gap-1 rounded-xl bg-brand px-4 py-2.5 text-sm font-medium text-white shadow-lg shadow-brand/25 transition-colors hover:bg-brand-dark"
+        >
+          查看接入教程
+          <ArrowRight className="h-4 w-4" />
+        </Link>
       </section>
     </div>
   )
