@@ -1992,6 +1992,13 @@ async def not_found(request: Request, exc):
     return JSONResponse({"detail": detail}, status_code=404)
 
 
+# AntiSIT 第三方拓展市场源：market.json / market.json.sig / 拓展 zip
+# 由 extensions/market/pack.mjs 生成后上传到 backend/data/market/（data 目录不进 Git）
+MARKET_DIR = config.DATA_DIR / "market"
+MARKET_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/market", StaticFiles(directory=str(MARKET_DIR)), name="market")
+
+
 if config.DIST_DIR.exists():
     app.mount("/", StaticFiles(directory=str(config.DIST_DIR), html=True), name="frontend")
 else:
