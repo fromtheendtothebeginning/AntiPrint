@@ -11,19 +11,11 @@
 管理端工具在 `antiprint-mcp`（server.py），用户端工具在 `antiprint-user-mcp`。
 """
 
-import mimetypes
-from pathlib import Path
-
 from mcp.server.fastmcp import FastMCP
 
-from antiprint_mcp.server import _api, _job_brief
+from antiprint_mcp.server import _api, _job_brief, _submit_print_job
 
 mcp = FastMCP("AntiPrint 用户端")
-
-# 与后端 constants.UPLOAD_EXT / config.MAX_FILE_SIZE 保持一致
-ALLOWED_EXT = {".pdf", ".png", ".jpg", ".jpeg", ".docx", ".doc", ".pptx", ".ppt"}
-MAX_FILE_BYTES = 10 * 1024 * 1024
-MAX_FILES = 5
 
 
 def _job_list(jobs: list[dict], status: str, limit: int) -> dict:
@@ -82,33 +74,6 @@ def withdraw_my_job(job_id: int) -> dict:
 
 # ── 提交打印 ──
 
-def _prepare_files(file_paths: list[str]) -> list[tuple]:
-    """把本地路径读成 multipart 文件段；先做后缀 / 大小 / 数量校验，错误信息给中文。"""
-    paths = [str(item).strip() for item in (file_paths or []) if str(item).strip()]
-    if not paths:
-        raise RuntimeError("请至少传一个本地文件路径（file_paths）")
-    if len(paths) > MAX_FILES:
-        raise RuntimeError(f"最多 {MAX_FILES} 个文件")
-    parts = []
-    for raw in paths:
-        path = Path(raw).expanduser()
-        if not path.is_file():
-            raise RuntimeError(f"文件不存在：{raw}")
-        suffix = path.suffix.lower()
-        if suffix not in ALLOWED_EXT:
-            raise RuntimeError(f"不支持的文件类型：{path.name}（只收 PDF / 图片 / Word / PPT）")
-        size = path.stat().st_size
-        if size > MAX_FILE_BYTES:
-            raise RuntimeError(f"文件超过 10MB：{path.name}")
-        if size == 0:
-            raise RuntimeError(f"文件是空的：{path.name}")
-        parts.append((
-            "files",
-            (path.name, path.read_bytes(), mimetypes.guess_type(path.name)[0] or "application/octet-stream"),
-        ))
-    return parts
-
-
 @mcp.tool()
 def submit_print_job(
     file_paths: list[str],
@@ -124,36 +89,15 @@ def submit_print_job(
 ) -> dict:
     """提交一个打印任务：读取本机文件并上传（PDF / 图片 / Word / PPT，单个 ≤10MB，最多 5 个）。
 
+    提交时按「张数 × 单价」从余额自动扣费，任务立刻进入「待审核」队列；
+    免费账号（白名单 / anticraft / 管理员）不扣费。
     delivery_mode：「配送」需要填写 address；留空取我的默认配送方式。
-    pay_mode：balance=余额支付（默认）；instant=支付宝即时付款（返回 pay_url 给用户扫码/打开）。
-    paper：A4 / A3 等；pages：例如 "1-3,5"；nup：每面页数；scale：缩放，均留空用打印机默认。
+    pay_mode：balance=余额支付（默认，提交即扣费）；instant=支付宝即时付款（返回 pay_url 给用户扫码/打开）。
+    paper / pages / nup / scale 留空用打印机默认。
     """
-    mode = (delivery_mode or "").strip()
-    if mode and mode not in ("配送", "取件"):
-        raise RuntimeError("delivery_mode 只能是「配送」或「取件」")
-    if mode == "配送" and not (address or "").strip():
-        raise RuntimeError("选择配送时请填写配送地址 address")
-    pay = (pay_mode or "balance").strip().lower()
-    if pay not in ("balance", "instant"):
-        raise RuntimeError("pay_mode 只能是 balance（余额支付）或 instant（即时付款）")
-
-    data = {
-        "copies": str(int(copies)),
-        "pay_mode": pay,
-    }
-    for key, value in (
-        ("delivery_mode", mode),
-        ("address", (address or "").strip()),
-        ("note", (note or "").strip()),
-        ("paper", (paper or "").strip()),
-        ("pages", (pages or "").strip()),
-        ("nup", (nup or "").strip()),
-        ("scale", (scale or "").strip()),
-    ):
-        if value:
-            data[key] = value
-
-    return _api("POST", "/api/jobs", data=data, files=_prepare_files(file_paths))
+    return _submit_print_job(
+        file_paths, delivery_mode, address, copies, note, pay_mode, paper, pages, nup, scale,
+    )
 
 
 # ── 充值 ──

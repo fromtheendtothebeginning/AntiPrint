@@ -31,13 +31,14 @@ const USER_TOOLS: { name: string; text: string }[] = [
   { name: 'my_balance', text: '余额、单价与扣费流水' },
   { name: 'list_my_jobs', text: '我的任务列表（可按状态筛选）' },
   { name: 'get_my_job', text: '单个任务详情' },
-  { name: 'submit_print_job', text: '读取本机文件并提交打印' },
+  { name: 'submit_print_job', text: '读本机文件提交打印（自动扣费 + 进队列）' },
   { name: 'withdraw_my_job', text: '撤回未出纸的任务并退费' },
   { name: 'recharge', text: '创建支付宝充值订单' },
   { name: 'check_recharge', text: '查充值是否到账' },
 ]
 
 const ADMIN_TOOLS: { name: string; text: string }[] = [
+  { name: 'submit_print_job', text: '提交打印并自动入队（管理员免费）' },
   { name: 'list_jobs / get_job', text: '任务队列与详情' },
   { name: 'approve_job / reject_job', text: '审核通过 / 驳回退费' },
   { name: 'retry_job / reprint_job', text: '重试 / 重新打印' },
@@ -396,7 +397,7 @@ function McpPage({ role = 'user' }: McpPageProps) {
           <Step index={4} title="验证">
             <p>
               在客户端里刷新 MCP 工具列表，应该能看到{' '}
-              {tab === 'admin' ? '17' : '8'} 个以 <code className="font-mono">mcp_antiprint</code> 开头的工具。
+              {tab === 'admin' ? '18' : '8'} 个以 <code className="font-mono">mcp_antiprint</code> 开头的工具。
               然后对 AI 说：「先 whoami，再列出我的打印任务」。
             </p>
             <div className="grid gap-2 sm:grid-cols-2">
@@ -420,8 +421,11 @@ function McpPage({ role = 'user' }: McpPageProps) {
           <div>
             <dt className="font-medium text-gray-700 dark:text-gray-200">提交打印时文件从哪来？</dt>
             <dd className="mt-0.5 text-gray-600 dark:text-gray-300">
-              直接从运行 MCP 服务的这台电脑上读本地路径（PDF / 图片 / Word / PPT，单个 ≤10MB，最多 5 个），
-              和网页上传是同一套计费与审核流程。
+              直接从运行 MCP 服务的这台电脑上读本地路径（PDF / 图片 / Word / PPT，单个 ≤10MB，最多 5 个）。
+              <span className="font-medium text-gray-700 dark:text-gray-200">
+                提交时服务端自动按「张数 × 单价」扣余额，并立刻把任务放进「待审核」队列
+              </span>
+              （管理员 / 白名单 / anticraft 账号免费不扣）；余额不足会直接报错，账上没钱就先充值或改用即时付款。
             </dd>
           </div>
           <div>
