@@ -5,6 +5,7 @@ import {
   CircleAlert,
   CircleCheck,
   Clock,
+  CreditCard,
   Inbox,
   LoaderCircle,
   MapPin,
@@ -29,6 +30,7 @@ import {
   STATUS_APPROVED,
   STATUS_PENDING,
   STATUS_REJECTED,
+  STATUS_UNPAID,
   describePrintOptions,
   formatTime,
   statusBadge,
@@ -89,6 +91,22 @@ function MyJobsPage() {
       await load()
     } finally {
       setBusy(false)
+    }
+  }
+
+  /** 即时付款任务：重新打开支付宝收银台 */
+  async function payUnpaid(job: Job) {
+    const win = window.open('', '_blank')
+    try {
+      const result = await api.payJob(job.id)
+      if (win) {
+        win.location.href = result.pay_url
+      } else {
+        window.location.href = result.pay_url
+      }
+    } catch (err) {
+      if (win) win.close()
+      setError(getErrorMessage(err))
     }
   }
 
@@ -260,6 +278,24 @@ function MyJobsPage() {
                 )}
               </dl>
 
+              {job.status === STATUS_UNPAID && (
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-brand/5 px-4 py-3 dark:bg-white/5">
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    即时付款任务：支付成功后才会进入审核队列
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" className={BTN_PRIMARY} onClick={() => void payUnpaid(job)}>
+                      <CreditCard className="h-4 w-4" />
+                      去支付
+                    </button>
+                    <button type="button" className={BTN_SECONDARY} onClick={() => setWithdrawJob(job)}>
+                      <Undo2 className="h-4 w-4" />
+                      取消订单
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* 撤回：出纸之前（待审核 / 已通过）提交人可以自己撤单 */}
               {(job.status === STATUS_PENDING || job.status === STATUS_APPROVED) && (
                 <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-warm px-4 py-3 dark:bg-white/5">
@@ -392,7 +428,7 @@ function MyJobsPage() {
       {/* 撤回确认：出纸前才能撤，服务端会再校验一次状态 */}
       <Modal
         open={withdrawJob !== null}
-        title={withdrawJob ? `撤回任务 #${withdrawJob.id}` : '撤回任务'}
+        title={withdrawJob ? `${withdrawJob.status === STATUS_UNPAID ? '取消订单' : '撤回任务'} #${withdrawJob.id}` : '撤回任务'}
         onClose={() => setWithdrawJob(null)}
         danger
         size="sm"
@@ -408,13 +444,15 @@ function MyJobsPage() {
               onClick={() => void confirmWithdraw()}
             >
               {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Undo2 className="h-4 w-4" />}
-              确认撤回
+              确认{withdrawJob?.status === STATUS_UNPAID ? '取消' : '撤回'}
             </button>
           </>
         }
       >
         <p className="text-sm text-gray-600 dark:text-gray-300">
-          撤回后该任务会标记为「已撤回」，需要重新提交才能打印。
+          {withdrawJob?.status === STATUS_UNPAID
+            ? '取消后该任务会标记为「已撤回」，未支付的订单会关闭，不会扣款。'
+            : '撤回后该任务会标记为「已撤回」，需要重新提交才能打印。'}
         </p>
         {modalError && (
           <p className={ALERT_ERROR}>

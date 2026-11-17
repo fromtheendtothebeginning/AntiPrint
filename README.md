@@ -111,3 +111,9 @@ anticraft 账号绑定：`GET /api/oauth/anticraft/status`（是否已配置）�
 - pip 若报「找不到 fastapi」是清华源对新 Python 返回空，改用 `-i https://mirrors.aliyun.com/pypi/simple/`（setup.bat 已内置）。
 - 数据库凭据在 `backend/db_config.json`（已 gitignore，模板 `db_config.example.json`）；部署相关脚本与凭据**禁止提交**。
 - 更多排错细节、状态机、部署红线见 **AGENTS.md**。
+
+## 开源协议
+
+本项目采用 **GNU General Public License v3.0（GPL-3.0）**，协议全文见 [LICENSE](LICENSE)。
+
+你可以自由使用、修改和分发本项目；衍生作品必须同样以 GPL-3.0 开源，并保留版权声明与协议文本。

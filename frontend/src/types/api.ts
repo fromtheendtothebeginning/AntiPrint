@@ -15,6 +15,7 @@ export type DeliveryMode = '配送' | '取件'
 
 /** 任务状态：固定中文字面量，前后端共享，勿改字面量 */
 export type JobStatus =
+  | '待支付'
   | '待审核'
   | '已通过'
   | '打印中'
@@ -67,7 +68,19 @@ export interface Job {
   print_options?: PrintOptions
   /** 本单实际扣费（元，0 = 免费账号或已退费） */
   charge?: number | string
+  /** 支付方式：balance = 余额扣费；alipay = 即时付款 */
+  pay_method?: 'balance' | 'alipay'
   files: JobFile[]
+}
+
+/** 提交打印任务的返回（即时付款时带收银台地址） */
+export interface SubmitJobResult {
+  job: Job
+  charge: string
+  balance: string
+  pay_mode: 'balance' | 'instant'
+  out_trade_no?: string
+  pay_url?: string
 }
 
 /** 用户配置：默认配送地址与默认配送方式，以及 anticraft 绑定状态 */
@@ -110,8 +123,39 @@ export interface BalanceInfo {
   free_reason: string
   price: string
   logs: BalanceLog[]
-  /** 付款码/充值是否已开放（当前一律 false = 暂未实现） */
+  /** 充值是否已开放（支付宝已配置或本地 mock 模式） */
   recharge_enabled: boolean
+  /** 快捷充值档位（元） */
+  recharge_amounts: number[]
+  /** 充值赠送比例（50 = 充 10 到账 15） */
+  recharge_bonus_percent: number
+  /** 可用支付渠道 */
+  pay_channels: string[]
+}
+
+/** 充值订单 */
+export interface PaymentOrder {
+  id: number
+  out_trade_no: string
+  user_id: number
+  amount: number | string
+  channel: string
+  status: 'pending' | 'paid' | 'closed' | 'failed' | string
+  provider_txn_id: string | null
+  paid_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+/** 创建充值订单的返回 */
+export interface RechargeResult {
+  out_trade_no: string
+  amount: string
+  /** 实际到账金额（含赠送） */
+  credit_amount: string
+  bonus_percent: number
+  pay_url: string
+  mock: boolean
 }
 
 export interface Agent {

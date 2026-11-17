@@ -9,8 +9,11 @@ import type {
   DownloadPackage,
   Job,
   JobStatus,
+  PaymentOrder,
   Profile,
+  RechargeResult,
   Settings,
+  SubmitJobResult,
   User,
 } from './types/api'
 
@@ -405,6 +408,28 @@ export const api = {
     return request<BalanceInfo>('/api/balance')
   },
 
+  /** 创建充值订单，返回支付宝收银台地址（mock 模式返回本地模拟页） */
+  async createRecharge(amount: string): Promise<RechargeResult> {
+    return request<RechargeResult>('/api/pay/recharge', { method: 'POST', body: { amount } })
+  },
+
+  /** 查询充值订单状态（支付成功后后端会入账） */
+  async getPaymentOrder(outTradeNo: string): Promise<{ order: PaymentOrder; balance: string }> {
+    return request<{ order: PaymentOrder; balance: string }>(
+      `/api/pay/orders/${encodeURIComponent(outTradeNo)}`,
+    )
+  },
+
+  /** 取消待支付订单（后端会先查单，已付款则直接入账） */
+  async cancelRechargeOrder(
+    outTradeNo: string,
+  ): Promise<{ order: PaymentOrder; canceled: boolean; balance: string }> {
+    return request<{ order: PaymentOrder; canceled: boolean; balance: string }>(
+      `/api/pay/orders/${encodeURIComponent(outTradeNo)}/cancel`,
+      { method: 'POST' },
+    )
+  },
+
   /** root 删除账号（余额必须为 0；任务与流水保留） */
   async deleteUser(userId: number): Promise<void> {
     await request<{ ok: boolean }>(`/api/users/${userId}`, { method: 'DELETE' })
@@ -431,9 +456,15 @@ export const api = {
   },
 
   /** 提交打印任务（multipart：address 必填、note 可选、files 可多个） */
-  async submitJob(formData: FormData): Promise<Job> {
-    const data = await request<{ job: Job }>('/api/jobs', { method: 'POST', body: formData })
-    return data.job
+  async submitJob(formData: FormData): Promise<SubmitJobResult> {
+    return request<SubmitJobResult>('/api/jobs', { method: 'POST', body: formData })
+  },
+
+  /** 为「待支付」的即时付款任务重新获取收银台地址 */
+  async payJob(jobId: number): Promise<{ job: Job; out_trade_no: string; pay_url: string }> {
+    return request<{ job: Job; out_trade_no: string; pay_url: string }>(`/api/jobs/${jobId}/pay`, {
+      method: 'POST',
+    })
   },
 
   /** 取任务文件内容：接口需要 Bearer，因此用 fetch 拿 Blob 再由调用方 createObjectURL */

@@ -15,7 +15,7 @@ import db
 
 LOG = logging.getLogger("antiprint.billing")
 
-DEFAULT_PRICE = "0.1"
+DEFAULT_PRICE = "0.15"
 PRICE_MIN = Decimal("0")
 PRICE_MAX = Decimal("100")          # 单张上限：防手滑写成 1000 元/张
 CENT = Decimal("0.01")

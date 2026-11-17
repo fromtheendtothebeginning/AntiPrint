@@ -1,7 +1,18 @@
 # Python
 backend/.venv/
+mcp/.venv/
+*.egg-info/
 __pycache__/
 *.pyc
+
+# Flutter App 构建产物（app/ 是安卓管理端源码工程）
+app/build/
+app/.dart_tool/
+app/.flutter-plugins-dependencies
+app/android/.gradle/
+# 打包好的安装包不入库（需要时重新 flutter build apk）
+*.apk
+*.apk.sha1
 
 # 依赖与构建产物
 node_modules/
@@ -11,6 +22,7 @@ dist/
 # 本机配置与数据（含凭据，禁止提交）
 backend/.env
 backend/db_config.json
+backend/payment_config.json
 backend/data/
 backend/log/
 agent/config.json
