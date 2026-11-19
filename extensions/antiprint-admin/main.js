@@ -53,7 +53,8 @@ export default {
       agents: [],
       agentOnline: false,
       notifyOn: true,
-      pendingSig: '',
+      // 已知任务 id 集合：首次加载只记基线，之后新出现的 id 才算「新上传」
+      jobIds: null,
       loading: false,
       booted: false,
       // 正在处理的任务 id：同一单的按钮在请求期间禁用，防止连点造成重复审核
@@ -129,7 +130,7 @@ export default {
       state.me = null;
       state.jobs = [];
       state.users = [];
-      state.pendingSig = '';
+      state.jobIds = null;
       await ctx.storage.remove('token');
       render();
       if (!silent) ctx.ui.toast('已退出登录');
@@ -142,23 +143,26 @@ export default {
       state.jobs = Array.isArray(data.jobs) ? data.jobs : [];
       state.agents = Array.isArray(data.agents) ? data.agents : [];
       state.agentOnline = data.agent_online === true;
-      // 新待审通知：首次加载只记基线，不打扰
-      const pendingIds = state.jobs.filter((job) => job.status === '待审核').map((job) => job.id);
-      const signature = pendingIds.slice().sort((a, b) => a - b).join(',');
-      if (state.pendingSig && signature !== state.pendingSig) {
-        const previous = new Set(state.pendingSig.split(',').filter(Boolean).map(Number));
-        const added = state.jobs.filter((job) => job.status === '待审核' && !previous.has(job.id));
+      // 新任务提醒：首次加载只记基线；之后新出现的任务（含待支付/待审核）弹一次通知
+      const known = state.jobIds;
+      if (known && state.jobs.length) {
+        const added = state.jobs.filter((job) => !known.has(job.id));
         if (added.length && state.notifyOn) {
           const first = added[0];
-          const fileCount = filesOf(first).length;
-          ctx.notify.show({
-            key: 'pending-' + first.id,
-            title: '新任务待审核 #' + first.id,
-            body: (first.username || '未知用户') + ' · ' + fileCount + ' 个文件 · ' + (first.delivery_mode || ''),
-          });
+          const title = added.length === 1
+            ? '新打印任务 #' + first.id
+            : '有 ' + added.length + ' 个新打印任务';
+          const body = added.length === 1
+            ? (first.username || '未知用户') + ' · ' + filesOf(first).length + ' 个文件 · ' +
+              (first.status || '') + (first.delivery_mode ? ' · ' + first.delivery_mode : '')
+            : '最新：' + (first.username || '未知用户') + ' · ' + filesOf(first).length + ' 个文件 · ' +
+              (first.status || '');
+          // 系统通知失败（用户拒绝权限等）不影响页面内提示
+          Promise.resolve(ctx.notify.show({ key: 'new-job-' + first.id, title, body })).catch(() => {});
+          ctx.ui.toast(title);
         }
       }
-      state.pendingSig = signature;
+      state.jobIds = new Set(state.jobs.map((job) => job.id));
       // 轮询时只在数据真的变了才重画：避免每 30 秒整页闪一次，也保证新任务 / 状态变化能自动出现
       const after = state.jobs.map((job) => job.id + ':' + job.status).join(',');
       if (!silent || before !== after) render();
@@ -207,6 +211,13 @@ export default {
     }
 
     ctx.effect(() => () => stopPolling());
+
+    // 回到 App / 拓展页时立即拉一次，不用等下一个轮询周期
+    function onVisible() {
+      if (document.visibilityState === 'visible' && state.token) loadJobs(true).catch(() => {});
+    }
+    document.addEventListener('visibilitychange', onVisible);
+    ctx.effect(() => () => document.removeEventListener('visibilitychange', onVisible));
 
     // ── 弹层 ──
     function askText(title, hint, initial) {
@@ -638,6 +649,14 @@ export default {
           state.notifyOn = !state.notifyOn;
           await ctx.storage.set('notify', state.notifyOn);
           role.textContent = '待审通知：' + (state.notifyOn ? '开' : '关');
+          if (state.notifyOn) {
+            // 打开时发一条确认通知：顺便触发系统通知权限申请，避免第一条真实提醒被吞掉
+            Promise.resolve(ctx.notify.show({
+              key: 'notify-on',
+              title: '新任务提醒已开启',
+              body: '队列里有新上传的任务时会在这里提醒你',
+            })).catch(() => {});
+          }
         } else if (value === 'logout') {
           mask.remove();
           await logout(false);
