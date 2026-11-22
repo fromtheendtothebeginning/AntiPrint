@@ -5,12 +5,16 @@ import type {
   Agent,
   AnticraftOauthStatus,
   ApiDocs,
+  ApiToken,
   DeliveryMode,
   DownloadPackage,
   Job,
   JobStatus,
+  PaymentOrder,
   Profile,
+  RechargeResult,
   Settings,
+  SubmitJobResult,
   User,
 } from './types/api'
 
@@ -223,15 +227,58 @@ export function getErrorMessage(error: unknown): string {
   return '操作失败，请稍后重试'
 }
 
+/** 是否被后端「未绑定手机号」拦下（403 + detail.code=phone_required） */
+export function isPhoneRequired(error: unknown): boolean {
+  if (!(error instanceof ApiError) || error.status !== 403) return false
+  const detail = error.detail as { code?: string } | null
+  return Boolean(detail && detail.code === 'phone_required')
+}
+
 export const api = {
   /** 登录：成功返回令牌与用户信息；失败后端返回 401 中文提示 */
   async login(username: string, password: string): Promise<{ token: string; user: User }> {
     return request<{ token: string; user: User }>('/api/login', { method: 'POST', body: { username, password } })
   },
 
-  /** 注册：成功后直接返回令牌与用户信息，相当于自动登录 */
-  async register(username: string, password: string): Promise<{ token: string; user: User }> {
-    return request<{ token: string; user: User }>('/api/register', { method: 'POST', body: { username, password } })
+  /** 注册：手机号必须通过短信验证码；成功后直接返回令牌与用户信息，相当于自动登录 */
+  async register(
+    username: string,
+    password: string,
+    phone: string,
+    code: string,
+  ): Promise<{ token: string; user: User }> {
+    return request<{ token: string; user: User }>('/api/register', {
+      method: 'POST',
+      body: { username, password, phone, code },
+    })
+  },
+
+  /** 发送短信验证码：scene=register（未登录注册）/ bind（已登录绑定）/ login（短信登录） */
+  async sendSmsCode(
+    phone: string,
+    scene: 'register' | 'bind' | 'login',
+  ): Promise<{ ok: boolean; mock: boolean; expires_in: number; notice: string }> {
+    return request<{ ok: boolean; mock: boolean; expires_in: number; notice: string }>('/api/sms/code', {
+      method: 'POST',
+      body: { phone, scene },
+    })
+  },
+
+  /** 短信验证码登录：手机号必须已绑定账号 */
+  async loginSms(phone: string, code: string): Promise<{ token: string; user: User }> {
+    return request<{ token: string; user: User }>('/api/login/sms', {
+      method: 'POST',
+      body: { phone, code },
+    })
+  },
+
+  /** 绑定/更换手机号（需要短信验证码） */
+  async bindPhone(phone: string, code: string): Promise<Profile> {
+    const data = await request<{ profile: Profile }>('/api/profile/phone', {
+      method: 'POST',
+      body: { phone, code },
+    })
+    return data.profile
   },
 
   /**
@@ -264,6 +311,25 @@ export const api = {
   /** 校验当前令牌是否有效，并返回最新的用户信息 */
   async me(): Promise<User> {
     return request<User>('/api/me')
+  },
+
+  /** 我的 API 令牌列表（MCP / 脚本用；不含明文与哈希） */
+  async listTokens(): Promise<ApiToken[]> {
+    const data = await request<{ tokens: ApiToken[] }>('/api/tokens')
+    return data.tokens
+  },
+
+  /** 生成长期 API 令牌：明文只返回这一次，必须立即保存 */
+  async createToken(name: string): Promise<{ token: string; token_info: ApiToken }> {
+    return request<{ token: string; token_info: ApiToken }>('/api/tokens', {
+      method: 'POST',
+      body: { name },
+    })
+  },
+
+  /** 撤销令牌（撤销后 MCP / 脚本立即失效） */
+  async revokeToken(id: number): Promise<void> {
+    await request<{ ok: boolean }>(`/api/tokens/${id}`, { method: 'DELETE' })
   },
 
   /** 我的任务列表 */
@@ -405,6 +471,28 @@ export const api = {
     return request<BalanceInfo>('/api/balance')
   },
 
+  /** 创建充值订单，返回支付宝收银台地址（mock 模式返回本地模拟页） */
+  async createRecharge(amount: string): Promise<RechargeResult> {
+    return request<RechargeResult>('/api/pay/recharge', { method: 'POST', body: { amount } })
+  },
+
+  /** 查询充值订单状态（支付成功后后端会入账） */
+  async getPaymentOrder(outTradeNo: string): Promise<{ order: PaymentOrder; balance: string }> {
+    return request<{ order: PaymentOrder; balance: string }>(
+      `/api/pay/orders/${encodeURIComponent(outTradeNo)}`,
+    )
+  },
+
+  /** 取消待支付订单（后端会先查单，已付款则直接入账） */
+  async cancelRechargeOrder(
+    outTradeNo: string,
+  ): Promise<{ order: PaymentOrder; canceled: boolean; balance: string }> {
+    return request<{ order: PaymentOrder; canceled: boolean; balance: string }>(
+      `/api/pay/orders/${encodeURIComponent(outTradeNo)}/cancel`,
+      { method: 'POST' },
+    )
+  },
+
   /** root 删除账号（余额必须为 0；任务与流水保留） */
   async deleteUser(userId: number): Promise<void> {
     await request<{ ok: boolean }>(`/api/users/${userId}`, { method: 'DELETE' })
@@ -431,9 +519,15 @@ export const api = {
   },
 
   /** 提交打印任务（multipart：address 必填、note 可选、files 可多个） */
-  async submitJob(formData: FormData): Promise<Job> {
-    const data = await request<{ job: Job }>('/api/jobs', { method: 'POST', body: formData })
-    return data.job
+  async submitJob(formData: FormData): Promise<SubmitJobResult> {
+    return request<SubmitJobResult>('/api/jobs', { method: 'POST', body: formData })
+  },
+
+  /** 为「待支付」的即时付款任务重新获取收银台地址 */
+  async payJob(jobId: number): Promise<{ job: Job; out_trade_no: string; pay_url: string }> {
+    return request<{ job: Job; out_trade_no: string; pay_url: string }>(`/api/jobs/${jobId}/pay`, {
+      method: 'POST',
+    })
   },
 
   /** 取任务文件内容：接口需要 Bearer，因此用 fetch 拿 Blob 再由调用方 createObjectURL */

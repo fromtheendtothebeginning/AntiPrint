@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>AntiPrint 管理 · AntiSIT 拓展安装</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 28px 20px 48px;
+    background: #f6f7f9; color: #1b1b1f;
+    font-family: -apple-system, "Noto Sans SC", "PingFang SC", "Segoe UI", system-ui, sans-serif;
+    line-height: 1.65;
+  }
+  main { max-width: 560px; margin: 0 auto; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(15,155,142,.12); color: #0f9b8e;
+    border-radius: 999px; padding: 4px 12px; font-size: 12px;
+  }
+  h1 { font-size: 24px; margin: 14px 0 6px; }
+  .sub { margin: 0 0 20px; color: #6b6b73; font-size: 14px; }
+  .card {
+    background: #fff; border-radius: 16px; padding: 18px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.05); margin-bottom: 16px;
+  }
+  .card.tag { border: 1px solid rgba(15,155,142,.35); }
+  .qr { display: flex; justify-content: center; padding: 6px 0 10px; }
+  .qr img { width: 220px; height: 220px; border-radius: 12px; background: #fff; }
+  .qr-note { text-align: center; color: #6b6b73; font-size: 12px; margin: 0; }
+  h2 { font-size: 15px; margin: 0 0 10px; }
+  .pill {
+    display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 999px;
+    background: rgba(15,155,142,.14); color: #0f9b8e; vertical-align: middle; margin-left: 6px;
+  }
+  .pill.gray { background: #f1f2f4; color: #6b6b73; }
+  ol { margin: 0; padding-left: 20px; }
+  li { margin: 8px 0; font-size: 14px; }
+  code {
+    background: #f1f2f4; border-radius: 6px; padding: 2px 6px;
+    font-family: ui-monospace, Consolas, monospace; font-size: 13px;
+    word-break: break-all;
+  }
+  .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
+  .row code { flex: 1 1 220px; }
+  button {
+    border: 0; border-radius: 10px; padding: 8px 14px; font: inherit;
+    background: #0f9b8e; color: #fff; font-size: 13px;
+  }
+  button:active { transform: scale(.97); }
+  .warn {
+    background: #fff7e6; color: #8a5a00; border-radius: 12px;
+    padding: 12px 14px; font-size: 13px;
+  }
+  .warn strong { color: #7a4d00; }
+  a { color: #0f9b8e; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #14151a; color: #ececf1; }
+    .card { background: #1e1f26; box-shadow: none; }
+    .sub, .qr-note, li { color: #b9b9c2; }
+    code { background: #2a2b33; color: #ececf1; }
+    .pill.gray { background: #2a2b33; color: #b9b9c2; }
+    .warn { background: #3a2e12; color: #f0c674; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <span class="badge">AntiSIT 拓展</span>
+  <h1>AntiPrint 管理</h1>
+  <p class="sub">在 AntiSIT 里审核打印任务、处理交接、管理用户余额与打印设置。</p>
+
+  <div class="card tag">
+    <h2>扫码直接安装 <span class="pill">推荐</span></h2>
+    <div class="qr">
+      <img src="/ext/direct-qr.png" alt="拓展安装码" width="220" height="220">
+    </div>
+    <p class="qr-note">用 AntiSIT「拓展」页右上角的扫一扫，扫这个安装码</p>
+    <ol style="margin-top:12px">
+      <li>打开 <strong>AntiSIT</strong> → 底栏「拓展」→ 右上角 <strong>扫一扫</strong></li>
+      <li>扫描上面的二维码，界面底部出现「<strong>下载拓展</strong>」</li>
+      <li>确认安装包信息（AntiPrint 管理 v1.1.3）与权限：本机存储 / 联网 / 通知</li>
+      <li>安装完成后打开拓展，用管理员账号登录即可</li>
+    </ol>
+    <p class="qr-note" style="text-align:left;margin-top:10px">
+      安装码自带 sha256（<code>09184b8d…077aa6</code>），下载后校验不一致就不会安装。
+      新版 AntiSIT 已给扫码 / 本地安装的拓展开放联网，装完能直接连服务器。
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>第三方源安装 <span class="pill gray">旧版 AntiSIT 用这个</span></h2>
+    <p class="sub" style="margin:0 0 10px">
+      如果你的 AntiSIT 还没有开放插件联网，扫码装上也会连不上服务器，请改用市场源安装：
+    </p>
+    <ol>
+      <li>「拓展」→ 顶部切到「市场」→「添加第三方源」</li>
+      <li>粘贴下面的源地址，核对指纹后再确认：</li>
+    </ol>
+    <div class="row">
+      <code id="src">https://print.anticraft.top/market/</code>
+      <button type="button" onclick="copyText('src', this)">复制</button>
+    </div>
+    <div class="row">
+      <span style="font-size:13px;color:#6b6b73">公钥指纹</span>
+      <code id="fp">0062-CC99-F646</code>
+      <button type="button" onclick="copyText('fp', this)">复制</button>
+    </div>
+    <p class="sub" style="margin:10px 0 0">
+      添加后在「市场」里安装「AntiPrint 管理」，之后有新版本会提示更新。
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>传输到手机安装</h2>
+    <p class="sub" style="margin:0 0 8px">
+      不方便扫码时：下载安装包，在「拓展 → + → 导入 Cordis 压缩包」里选择它。
+    </p>
+    <a href="/market/antiprint-admin-1.1.3.zip">下载 antiprint-admin-1.1.3.zip</a>
+  </div>
+
+  <div class="card warn">
+    <strong>装好后连不上服务器？</strong><br>
+    先确认拓展权限里有「联网」；旧版 AntiSIT 对本地导入的包会禁网，此时请按上面的「第三方源安装」重新装一次。
+  </div>
+</main>
+<script>
+  function copyText(id, button) {
+    var text = document.getElementById(id).textContent.trim();
+    function done() {
+      var old = button.textContent;
+      button.textContent = '已复制';
+      setTimeout(function () { button.textContent = old; }, 1200);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, fallback);
+    } else {
+      fallback();
+    }
+    function fallback() {
+      var area = document.createElement('textarea');
+      area.value = text;
+      document.body.appendChild(area);
+      area.select();
+      try { document.execCommand('copy'); done(); } catch (e) {}
+      document.body.removeChild(area);
+    }
+  }
+</script>
+</body>
+</html>

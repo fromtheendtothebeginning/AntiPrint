@@ -8,6 +8,10 @@ export interface User {
   role: Role
   /** 账号来源（如 anticraft）；早期本地账号可能没有该字段 */
   source?: string
+  /** 已绑定的手机号（11 位，空串 = 未绑定） */
+  phone?: string
+  /** 手机号是否已通过短信验证；未验证的账号不能提交任务/充值 */
+  phone_verified?: boolean
 }
 
 /** 配送方式：用户提交时选（默认取用户配置），决定打印完成后进「待配送」还是「待取件」 */
@@ -15,6 +19,7 @@ export type DeliveryMode = '配送' | '取件'
 
 /** 任务状态：固定中文字面量，前后端共享，勿改字面量 */
 export type JobStatus =
+  | '待支付'
   | '待审核'
   | '已通过'
   | '打印中'
@@ -67,7 +72,19 @@ export interface Job {
   print_options?: PrintOptions
   /** 本单实际扣费（元，0 = 免费账号或已退费） */
   charge?: number | string
+  /** 支付方式：balance = 余额扣费；alipay = 即时付款 */
+  pay_method?: 'balance' | 'alipay'
   files: JobFile[]
+}
+
+/** 提交打印任务的返回（即时付款时带收银台地址） */
+export interface SubmitJobResult {
+  job: Job
+  charge: string
+  balance: string
+  pay_mode: 'balance' | 'instant'
+  out_trade_no?: string
+  pay_url?: string
 }
 
 /** 用户配置：默认配送地址与默认配送方式，以及 anticraft 绑定状态 */
@@ -90,6 +107,10 @@ export interface Profile {
   price: string
   /** 头像文件名（空串 = 没设置，用首字母占位） */
   avatar: string
+  /** 已绑定手机号（空串 = 未绑定） */
+  phone: string
+  /** 手机号是否已通过短信验证 */
+  phone_verified: boolean
 }
 
 /** 余额流水（扣费/退费/管理员调账） */
@@ -110,8 +131,39 @@ export interface BalanceInfo {
   free_reason: string
   price: string
   logs: BalanceLog[]
-  /** 付款码/充值是否已开放（当前一律 false = 暂未实现） */
+  /** 充值是否已开放（支付宝已配置或本地 mock 模式） */
   recharge_enabled: boolean
+  /** 快捷充值档位（元） */
+  recharge_amounts: number[]
+  /** 充值赠送比例（50 = 充 10 到账 15） */
+  recharge_bonus_percent: number
+  /** 可用支付渠道 */
+  pay_channels: string[]
+}
+
+/** 充值订单 */
+export interface PaymentOrder {
+  id: number
+  out_trade_no: string
+  user_id: number
+  amount: number | string
+  channel: string
+  status: 'pending' | 'paid' | 'closed' | 'failed' | string
+  provider_txn_id: string | null
+  paid_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+/** 创建充值订单的返回 */
+export interface RechargeResult {
+  out_trade_no: string
+  amount: string
+  /** 实际到账金额（含赠送） */
+  credit_amount: string
+  bonus_percent: number
+  pay_url: string
+  mock: boolean
 }
 
 export interface Agent {
@@ -166,6 +218,10 @@ export interface AdminUserRow {
   job_count: number
   /** 账户余额（元） */
   balance: number | string
+  /** 已绑定手机号（空/缺省 = 未绑定） */
+  phone?: string | null
+  /** 手机号验证时间（空 = 未验证） */
+  phone_verified_at?: string | null
 }
 
 /** API 文档页（管理员可在页面上直接改，正文是 Markdown） */
@@ -194,4 +250,17 @@ export interface DownloadPackage {
   size_text: string
   sha256: string
   updated_at: number
+}
+
+/** MCP / 脚本用的长期 API 令牌（库里只存哈希，明文只在生成时返回一次） */
+export interface ApiToken {
+  id: number
+  user_id: number
+  name: string
+  /** 展示前缀（ap_ 开头的前 12 位），用来区分不同令牌 */
+  prefix: string
+  created_at: string
+  last_used_at: string | null
+  revoked_at: string | null
+  username?: string
 }

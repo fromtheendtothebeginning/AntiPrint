@@ -33,7 +33,7 @@ const CUSTOM_PRINTER = '__custom__'
 const MASKED_SECRET = '******'
 
 /* ---------- 样式配方（照 AGENTS.md「前端约定」，保证与全站一致） ---------- */
-const CARD = 'rounded-2xl bg-white p-6 shadow-xl shadow-black/[0.04] dark:bg-ink-soft'
+const CARD = 'rounded-2xl bg-white p-4 shadow-xl shadow-black/[0.04] sm:p-6 dark:bg-ink-soft'
 const LABEL = 'mb-1.5 block text-xs font-medium text-gray-500 dark:text-gray-400'
 const INPUT =
   'w-full rounded-xl border border-gray-200 bg-warm px-4 py-2.5 text-sm text-gray-800 placeholder:text-gray-400 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30 dark:border-white/10 dark:bg-white/5 dark:text-gray-100'
@@ -588,7 +588,7 @@ function AdminPage() {
           </h2>
           <p className={HINT}>
             管理员/root、anticraft 账号与白名单（在「用户管理」页按账号开关「设为免费」）免费；其余账号按「张数 × 单价」从余额扣除
-            （张数 = PDF 页数 ÷ 每张页数 × 份数）。提交时扣、驳回/撤回自动退；充值功能暂未开放，余额由管理员在「用户管理」里手工调整。
+            （张数 = PDF 页数 ÷ 每张页数 × 份数）。提交时扣、驳回/撤回自动退；用户可在「我的余额」用支付宝自助充值，管理员也可手工调账。
           </p>
 
           {settingsError && (

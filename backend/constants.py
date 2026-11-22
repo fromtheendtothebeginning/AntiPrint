@@ -5,6 +5,7 @@
 #          ↗（重试）  ↘（失败）打印失败
 # 待审核 → 已驳回 →（本人重提）→ 待审核
 S_PENDING = "待审核"
+S_UNPAID = "待支付"          # 即时付款任务：付成功前不进审核队列
 S_APPROVED = "已通过"
 S_PRINTING = "打印中"
 S_PRINTED = "已打印"
@@ -16,12 +17,12 @@ S_DONE = "已完成"
 S_WITHDRAWN = "已撤回"      # 提交人在出纸前撤回自己的任务
 
 STATUSES = (
-    S_PENDING, S_APPROVED, S_PRINTING, S_PRINTED, S_REJECTED, S_FAILED,
+    S_PENDING, S_UNPAID, S_APPROVED, S_PRINTING, S_PRINTED, S_REJECTED, S_FAILED,
     S_AWAIT_DELIVERY, S_AWAIT_PICKUP, S_DONE, S_WITHDRAWN,
 )
 
-# 提交人可以自己撤回的状态（还没出纸之前）；打印中/已打印都不允许
-USER_WITHDRAWABLE = (S_PENDING, S_APPROVED)
+# 提交人可以自己撤回的状态（还没出纸之前）；打印中/已打印都不允许；待支付也可以取消
+USER_WITHDRAWABLE = (S_UNPAID, S_PENDING, S_APPROVED)
 
 # 管理员「重新打印」允许的起始状态（再打一份：重新入队等代理领取）
 ADMIN_REPRINTABLE = (S_PRINTED, S_FAILED, S_AWAIT_DELIVERY, S_AWAIT_PICKUP, S_DONE)
@@ -40,11 +41,12 @@ PRINT_SCALE = ("fit", "noscale", "shrink")                   # 适应纸张 / �
 PRINT_COPIES_MAX = 99
 PAGE_RANGE_MAX_LEN = 64                                      # 页面范围形如 1-3,5,8-
 
-# 打印完成后的交接流转（管理员在任务队列里勾选）：
-#   已打印 →（配送单）待配送 /（取件单）待取件 → 已完成
+# 打印完成后的交接流转（管理员在任务队列里点选）：
+#   已打印 →（配送单）待配送 /（取件单）待取件 → 已完成；也可以从「已打印」直接点「已完成」
 # 值 = 该目标状态要求的配送方式（None = 不限）；配送单不能进「待取件」，反之亦然
 HANDOVER_NEXT = {
-    S_PRINTED: {S_AWAIT_DELIVERY: DELIVER, S_AWAIT_PICKUP: PICKUP},
+    # 已打印可以直接「已完成」（取件单当场交付时不用先点待取件再点完成）
+    S_PRINTED: {S_AWAIT_DELIVERY: DELIVER, S_AWAIT_PICKUP: PICKUP, S_DONE: None},
     S_AWAIT_DELIVERY: {S_DONE: None},
     S_AWAIT_PICKUP: {S_DONE: None},
 }

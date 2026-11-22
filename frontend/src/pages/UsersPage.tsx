@@ -17,7 +17,7 @@ import Modal from '../components/Modal'
 import { ROLE_LABEL } from '../constants'
 import type { AdminUserRow } from '../types/api'
 
-const CARD = 'rounded-2xl bg-white p-6 shadow-xl shadow-black/[0.04] dark:bg-ink-soft'
+const CARD = 'rounded-2xl bg-white p-4 shadow-xl shadow-black/[0.04] sm:p-6 dark:bg-ink-soft'
 const BTN_PRIMARY =
   'inline-flex items-center gap-1.5 rounded-xl bg-brand px-4 py-2 text-xs font-medium text-white shadow-lg shadow-brand/25 transition-all duration-200 hover:bg-brand-dark hover:shadow-xl hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60'
 const BTN_SECONDARY =
@@ -352,13 +352,15 @@ function UsersPage() {
         {loading ? (
           <p className="py-10 text-center text-sm text-gray-400">正在加载账号…</p>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+          <div className="hidden overflow-x-auto md:block">
             <table className="w-full min-w-[1040px]">
               <thead>
                 <tr className="border-b border-gray-100 dark:border-white/10">
                   <th className={TH}>用户名</th>
                   <th className={TH}>角色</th>
                   <th className={TH}>账号来源</th>
+                  <th className={TH}>手机号</th>
                   <th className={TH}>anticraft 绑定</th>
                   <th className={TH}>余额</th>
                   <th className={TH}>任务数</th>
@@ -400,6 +402,13 @@ function UsersPage() {
                         </span>
                       </td>
                       <td className={TD}>{row.source === 'anticraft' ? 'anticraft' : '本站注册'}</td>
+                      <td className={TD}>
+                        {row.phone ? (
+                          <span className="whitespace-nowrap font-mono text-xs text-gray-600 dark:text-gray-300">{row.phone}</span>
+                        ) : (
+                          <span className="text-xs text-red-500">未绑定</span>
+                        )}
+                      </td>
                       <td className={TD}>
                         {row.anticraft_id ? (
                           <span className="text-gray-500 dark:text-gray-400">已绑定（ID {row.anticraft_id}）</span>
@@ -499,6 +508,123 @@ function UsersPage() {
               </tbody>
             </table>
           </div>
+
+          {/* 手机端：竖排账号卡片（9 列表格在手机上没法看，按钮改成换行的大按钮） */}
+          <ul className="space-y-3 md:hidden">
+            {users.map((row) => {
+              const isSelf = row.id === me
+              const isRoot = row.role === 'root'
+              const busy = actingId === row.id
+              const freeReason = freeReasonOf(row)
+              const inWhitelist = whitelist.includes(row.username)
+              const hasBalance = Number(row.balance ?? 0) !== 0
+              const canManageRole = myRole === 'root'
+              return (
+                <li key={row.id} className="rounded-2xl border border-gray-100 p-4 dark:border-white/10">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-medium text-gray-800 dark:text-gray-100">{row.username}</span>
+                    {isSelf && <span className="text-xs text-gray-400">（我）</span>}
+                    <span className={roleBadge(row.role)}>
+                      <UserCog className="h-3.5 w-3.5" />
+                      {ROLE_LABEL[row.role] ?? row.role}
+                    </span>
+                    {freeReason && (
+                      <span className="inline-flex items-center gap-1 rounded-lg bg-brand/10 px-2 py-0.5 text-xs font-medium text-brand-dark dark:text-brand">
+                        <BadgeCheck className="h-3 w-3" />
+                        免费
+                      </span>
+                    )}
+                  </div>
+                  <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
+                    <div>余额 {Number(row.balance ?? 0).toFixed(2)} 元</div>
+                    <div>{row.job_count} 个任务</div>
+                    <div>
+                      手机号{' '}
+                      {row.phone ? (
+                        <span className="font-mono text-gray-600 dark:text-gray-300">{row.phone}</span>
+                      ) : (
+                        <span className="text-red-500">未绑定</span>
+                      )}
+                    </div>
+                    <div>{row.source === 'anticraft' ? 'anticraft 账号' : '本站注册'}</div>
+                    <div className="col-span-2 truncate text-gray-400">
+                      注册于 {row.created_at?.replace('T', ' ') ?? '—'}
+                    </div>
+                  </dl>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {row.role === 'root' || row.role === 'admin' || row.source === 'anticraft' ? (
+                      <span className="self-center text-xs text-gray-400">自带免费</span>
+                    ) : (
+                      <button
+                        type="button"
+                        className={inWhitelist ? BTN_SECONDARY : BTN_PRIMARY}
+                        disabled={busy}
+                        onClick={() => void toggleFree(row)}
+                      >
+                        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <BadgeCheck className="h-3.5 w-3.5" />}
+                        {inWhitelist ? '取消免费' : '设为免费'}
+                      </button>
+                    )}
+                    {isRoot ? (
+                      <span className="self-center text-xs text-gray-400">不可修改</span>
+                    ) : isSelf ? (
+                      <span className="self-center text-xs text-gray-400">不能改自己</span>
+                    ) : row.role === 'admin' ? (
+                      <button
+                        type="button"
+                        className={BTN_SECONDARY}
+                        disabled={busy || !canManageRole}
+                        onClick={() => void changeRole(row, 'user')}
+                      >
+                        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldOff className="h-3.5 w-3.5" />}
+                        收回管理员
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className={BTN_PRIMARY}
+                        disabled={busy || !canManageRole}
+                        onClick={() => void changeRole(row, 'admin')}
+                      >
+                        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+                        设为管理员
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className={BTN_SECONDARY}
+                      disabled={busy}
+                      onClick={() => {
+                        setBalanceTarget(row)
+                        setBalanceDelta('')
+                        setBalanceNote('')
+                        setBalanceError('')
+                      }}
+                    >
+                      <Coins className="h-3.5 w-3.5" />
+                      调整余额
+                    </button>
+                    {!isSelf && !isRoot && (
+                      <button
+                        type="button"
+                        className={BTN_DANGER}
+                        disabled={busy || hasBalance}
+                        title={hasBalance ? '余额不为 0：先在「调整余额」里扣到 0 再删除' : '删除账号'}
+                        onClick={() => {
+                          setDeleteTarget(row)
+                          setDeleteError('')
+                        }}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        删除
+                      </button>
+                    )}
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+          </>
         )}
       </div>
 

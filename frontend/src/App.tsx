@@ -17,7 +17,9 @@ import {
   FileText,
   ListChecks,
   LogOut,
+  Menu,
   PanelLeft,
+  Plug,
   Printer,
   Settings,
   ShieldCheck,
@@ -46,6 +48,7 @@ import QueuePage from './pages/QueuePage'
 import AdminPage from './pages/AdminPage'
 import UsersPage from './pages/UsersPage'
 import ApiDocsPage from './pages/ApiDocsPage'
+import McpPage from './pages/McpPage'
 import VprinterPage from './pages/VprinterPage'
 import type { LucideIcon } from 'lucide-react'
 import { ROLE_LABEL } from './constants'
@@ -57,7 +60,8 @@ const PAGE_META: Record<string, { title: string; subtitle: string }> = {
   '/mine': { title: '我的任务', subtitle: '查看自己提交的打印任务与审核、打印、交接进度' },
   '/vprinter': { title: '虚拟打印机', subtitle: '下载桌面客户端：在任意软件里 Ctrl+P 选「AntiPrint-1.0.0」就等于提交打印任务' },
   '/apidocs': { title: 'API 文档', subtitle: '打印 API 的参数、错误码与 Python 示例（管理员可直接在页面上编辑）' },
-  '/balance': { title: '我的余额', subtitle: '账户余额、单价与打印扣费 / 退费记录（充值暂未开放）' },
+  '/mcp': { title: 'MCP 接入', subtitle: '生成 API 令牌，把 AntiPrint 接进 Trae / Cursor / Claude：用户端与管理端都有教程' },
+  '/balance': { title: '我的余额', subtitle: '账户余额、单价与打印扣费 / 退费记录，支持支付宝充值' },
   '/profile': { title: '我的配置', subtitle: '默认配送地址与配送方式，以及 anticraft 账号绑定' },
   '/queue': { title: '任务队列', subtitle: '审核打印任务，并在出纸后勾选待配送 / 待取件与完成' },
   '/admin': { title: '管理设置', subtitle: '按二级菜单分栏：打印设置 / 打印计费 / 免费白名单 / 管理员名单 / anticraft 绑定 / 打印代理' },
@@ -251,6 +255,14 @@ function App() {
         }
       />
       <Route
+        path="/mcp"
+        element={
+          <RequireAuth user={user} hydrating={hydrating}>
+            <McpPage role={user?.role ?? 'user'} />
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/queue"
         element={
           <RequireAuth user={user} hydrating={hydrating} admin>
@@ -318,6 +330,7 @@ function App() {
     { to: '/submit', label: '提交打印', Icon: Upload, admin: false },
     { to: '/mine', label: '我的任务', Icon: FileText, admin: false },
     { to: '/vprinter', label: '虚拟打印机', Icon: Download, admin: false },
+    { to: '/mcp', label: 'MCP 接入', Icon: Plug, admin: false },
     { to: '/apidocs', label: 'API 文档', Icon: BookOpen, admin: false },
     { to: '/queue', label: '任务队列', Icon: ListChecks, admin: true },
     { to: '/balance', label: '我的余额', Icon: Wallet, admin: false, bottom: true },
@@ -331,6 +344,18 @@ function App() {
   })
   const mainNav = navItems.filter((item) => !item.bottom)
   const bottomNav = navItems.filter((item) => item.bottom)
+
+  // 手机端底部标签栏：只放最常用的 4 个入口，其余收进「更多」抽屉
+  const isAdmin = user.role === 'admin' || user.role === 'root'
+  const mobileTabs: { to: string; label: string; Icon: LucideIcon }[] = [
+    { to: '/submit', label: '提交', Icon: Upload },
+    { to: '/mine', label: '任务', Icon: FileText },
+    { to: '/balance', label: '余额', Icon: Wallet },
+    isAdmin
+      ? { to: '/queue', label: '队列', Icon: ListChecks }
+      : { to: '/mcp', label: 'MCP', Icon: Plug },
+  ]
+  const mobileTabActive = mobileTabs.some((tab) => tab.to === location.pathname)
 
   /** 侧栏导航项（顶部与底部两组共用同一套样式与收起逻辑） */
   const renderNavLink = ({ to, label, Icon }: { to: string; label: string; Icon: LucideIcon }) => (
@@ -399,6 +424,15 @@ function App() {
                 </div>
               </div>
             </div>
+            {/* 手机端底部标签栏没有「退出」，这里补一个（桌面端顶栏已有） */}
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="mt-3 flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-gray-500 transition-colors hover:bg-warm hover:text-gray-800 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-gray-100 lg:hidden"
+            >
+              <LogOut className="h-4 w-4" />
+              退出登录
+            </button>
           </div>
         </div>
       </aside>
@@ -417,23 +451,25 @@ function App() {
       {/* 主区 */}
       <div className={`transition-all duration-300 ${sidebarOpen ? 'lg:ml-60' : 'lg:ml-0'}`}>
         <header className="sticky top-0 z-30 border-b border-gray-200/50 bg-warm/80 backdrop-blur-md dark:border-white/10 dark:bg-warm-dark/80">
-          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 md:px-8 md:py-4">
-            <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5 sm:px-4 md:px-8 md:py-4">
+            <div className="flex min-w-0 items-center gap-2 sm:gap-4">
               <button
                 type="button"
                 onClick={() => setSidebarOpen((prev) => !prev)}
                 aria-label="折叠或展开侧栏"
-                className="rounded-xl p-2 text-gray-500 transition-all duration-200 hover:bg-white hover:shadow-sm dark:text-gray-400 dark:hover:bg-white/5"
+                className="hidden rounded-xl p-2 text-gray-500 transition-all duration-200 hover:bg-white hover:shadow-sm dark:text-gray-400 dark:hover:bg-white/5 lg:inline-flex"
               >
                 <PanelLeft className="h-5 w-5" />
               </button>
-              <div>
-                <h1 className="text-xl font-semibold text-gray-800 dark:text-gray-100">{meta.title}</h1>
-                <p className="hidden text-xs text-gray-400 sm:block">{meta.subtitle}</p>
+              <div className="min-w-0">
+                <h1 className="truncate text-base font-semibold text-gray-800 sm:text-xl dark:text-gray-100">
+                  {meta.title}
+                </h1>
+                <p className="hidden truncate text-xs text-gray-400 sm:block">{meta.subtitle}</p>
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex shrink-0 items-center gap-2 sm:gap-3">
               <span className="hidden items-center gap-2 rounded-xl bg-white px-3 py-2 text-xs font-medium text-gray-600 shadow-lg shadow-black/5 sm:inline-flex dark:bg-ink-soft dark:text-gray-300">
                 <User className="h-4 w-4" />
                 {user.username}
@@ -442,16 +478,53 @@ function App() {
               <button
                 type="button"
                 onClick={handleLogout}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-white px-3 py-2 text-xs font-medium text-gray-600 shadow-lg shadow-black/5 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xl dark:bg-ink-soft dark:text-gray-300"
+                aria-label="退出登录"
+                className="inline-flex items-center gap-1.5 rounded-xl bg-white px-2.5 py-2 text-xs font-medium text-gray-600 shadow-lg shadow-black/5 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xl sm:px-3 dark:bg-ink-soft dark:text-gray-300"
               >
                 <LogOut className="h-4 w-4" />
-                退出
+                <span className="hidden sm:inline">退出</span>
               </button>
             </div>
           </div>
         </header>
 
-        <main className="px-4 py-5 md:px-8 md:py-6">{routes}</main>
+        <main className="px-3 py-4 pb-28 sm:px-4 md:px-8 md:py-6 lg:pb-6">{routes}</main>
+
+        {/* 手机端底部标签栏：常用入口直达，其余进「更多」抽屉 */}
+        <nav
+          className="fixed inset-x-0 bottom-0 z-40 border-t border-gray-200/70 bg-white/95 backdrop-blur-md dark:border-white/10 dark:bg-ink/95 lg:hidden"
+          style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+          aria-label="手机端导航"
+        >
+          <div className="grid grid-cols-5">
+            {mobileTabs.map(({ to, label, Icon }) => {
+              const active = location.pathname === to
+              return (
+                <NavLink
+                  key={to}
+                  to={to}
+                  onClick={() => setPageNonce((value) => (location.pathname === to ? value + 1 : 0))}
+                  className={`flex flex-col items-center gap-0.5 py-2 text-[11px] transition-colors ${
+                    active ? 'text-brand' : 'text-gray-400 dark:text-gray-500'
+                  }`}
+                >
+                  <Icon className={`h-5 w-5 ${active ? 'text-brand' : ''}`} />
+                  {label}
+                </NavLink>
+              )
+            })}
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(true)}
+              className={`flex flex-col items-center gap-0.5 py-2 text-[11px] transition-colors ${
+                mobileTabActive ? 'text-gray-400 dark:text-gray-500' : 'text-brand'
+              }`}
+            >
+              <Menu className="h-5 w-5" />
+              更多
+            </button>
+          </div>
+        </nav>
       </div>
 
       {toast}
